@@ -37,10 +37,24 @@ function collectResults(suite, results = new Map()) {
   return results;
 }
 
+function collectVitest(report, results) {
+  for (const file of report.testResults ?? []) {
+    for (const assertion of file.assertionResults ?? []) {
+      const status = assertion.status === 'passed' ? 'passed' : assertion.status === 'failed' ? 'failed' : 'skipped';
+      for (const id of assertion.title.match(ID_RE) ?? []) {
+        const current = results.get(id);
+        if (!current || SEVERITY.indexOf(status) > SEVERITY.indexOf(current)) results.set(id, status);
+      }
+    }
+  }
+  return results;
+}
+
 const { values: args } = parseArgs({
   options: {
     project: { type: 'string', default: 'celtikci' },
     results: { type: 'string', default: 'reports/results.json' },
+    unit: { type: 'string', default: 'reports/unit.json' },
     out: { type: 'string', default: 'reports/summary.md' },
     write: { type: 'boolean', default: false },
   },
@@ -54,11 +68,13 @@ const cards = fs
   .sort()
   .map((name) => readCard(path.join(catalogDir, name)));
 
-if (!fs.existsSync(args.results)) {
-  console.error(`Results not found: ${args.results}`);
+if (!fs.existsSync(args.results) && !fs.existsSync(args.unit)) {
+  console.error(`Results not found: ${args.results}, ${args.unit}`);
   process.exit(2);
 }
-const results = collectResults(JSON.parse(fs.readFileSync(args.results, 'utf8')));
+const results = new Map();
+if (fs.existsSync(args.results)) collectResults(JSON.parse(fs.readFileSync(args.results, 'utf8')), results);
+if (fs.existsSync(args.unit)) collectVitest(JSON.parse(fs.readFileSync(args.unit, 'utf8')), results);
 
 const rows = cards.map((card) => {
   const result = results.get(card.id);
