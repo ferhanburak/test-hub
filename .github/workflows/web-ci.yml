@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       suite:
-        description: "fast (project tests), e2e (build + local E2E), full (e2e + live smoke)"
+        description: "fast (unit tests), e2e (fast + build + local E2E), full (e2e + live smoke)"
         required: false
         type: string
         default: fast
@@ -69,17 +69,23 @@ jobs:
         working-directory: target
         run: npm test --if-present
 
+      - name: Install test-hub dependencies
+        working-directory: hub
+        run: npm ci
+
+      - name: Run test-hub unit tests
+        working-directory: hub
+        run: npm run test:unit
+
       - name: Build project
         if: inputs.suite != 'fast'
         working-directory: target
         run: npm run build
 
-      - name: Install test-hub dependencies
+      - name: Install Playwright browser
         if: inputs.suite != 'fast'
         working-directory: hub
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Run Playwright
         if: inputs.suite != 'fast'
@@ -89,12 +95,12 @@ jobs:
           npx playwright test
 
       - name: Report
-        if: ${{ always() && inputs.suite != 'fast' && hashFiles('hub/reports/results.json') != '' }}
+        if: ${{ always() && hashFiles('hub/reports/*.json') != '' }}
         working-directory: hub
         run: node scripts/report.mjs --project "$HUB_PROJECT"
 
       - name: Upload test artifacts
-        if: ${{ always() && inputs.suite != 'fast' }}
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-hub-${{ inputs.project }}-${{ github.run_attempt }}
