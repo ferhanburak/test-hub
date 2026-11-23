@@ -57,7 +57,7 @@ describe('contact API', () => {
     const mail = sendMail.mock.calls[0][0];
     expect(mail.to).toBe('inbox@example.test');
     expect(mail.from).toContain('site@example.test');
-    expect(mail.replyTo).toContain(VALID_BODY.email);
+    expect(mail.replyTo?.address ?? mail.replyTo).toContain(VALID_BODY.email);
     expect(mail.subject).toContain(VALID_BODY.name);
     for (const value of [VALID_BODY.name, VALID_BODY.email, VALID_BODY.phone, VALID_BODY.message]) {
       expect(mail.text).toContain(value);
@@ -85,6 +85,16 @@ describe('contact API', () => {
     expect(res.payload.success).toBe(false);
     expect(sendMail).not.toHaveBeenCalled();
   });
+
+  test.each(['Yılmaz, Ali', 'A, attacker@example.test', 'Quote " Name'])(
+    'CLT-WEB-009 keeps Reply-To intact for name %s',
+    async (name) => {
+      const res = await call({ body: { ...VALID_BODY, name } });
+
+      expect(res.statusCode).toBe(200);
+      expect(sendMail.mock.calls[0][0].replyTo).toEqual({ name, address: VALID_BODY.email });
+    },
+  );
 
   test('CLT-WEB-008 SMTP failure returns a safe error', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
