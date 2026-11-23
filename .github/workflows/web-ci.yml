@@ -1,0 +1,106 @@
+name: web-ci
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Folder name under tests/ and catalog/
+        required: true
+        type: string
+      suite:
+        description: "fast (project tests), e2e (build + local E2E), full (e2e + live smoke)"
+        required: false
+        type: string
+        default: fast
+      node-version:
+        required: false
+        type: string
+        default: '22'
+      hub-ref:
+        description: test-hub ref to run
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HUB_PROJECT: ${{ inputs.project }}
+      SUITE: ${{ inputs.suite }}
+      HUB_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - name: Validate suite
+        run: |
+          case "$SUITE" in fast|e2e|full) ;; *) echo "Invalid suite: $SUITE"; exit 1 ;; esac
+
+      - name: Check out project
+        uses: actions/checkout@v4
+        with:
+          path: target
+          persist-credentials: false
+
+      - name: Check out test-hub
+        uses: actions/checkout@v4
+        with:
+          repository: ferhanburak/test-hub
+          ref: ${{ inputs.hub-ref }}
+          path: hub
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: |
+            target/package-lock.json
+            hub/package-lock.json
+
+      - name: Install project dependencies
+        working-directory: target
+        run: npm ci
+
+      - name: Run project tests
+        working-directory: target
+        run: npm test --if-present
+
+      - name: Build project
+        if: inputs.suite != 'fast'
+        working-directory: target
+        run: npm run build
+
+      - name: Install test-hub dependencies
+        if: inputs.suite != 'fast'
+        working-directory: hub
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run Playwright
+        if: inputs.suite != 'fast'
+        working-directory: hub
+        run: |
+          if [ "$SUITE" = "full" ]; then export HUB_SUITE=all; else export HUB_SUITE=local; fi
+          npx playwright test
+
+      - name: Report
+        if: ${{ always() && inputs.suite != 'fast' && hashFiles('hub/reports/results.json') != '' }}
+        working-directory: hub
+        run: node scripts/report.mjs --project "$HUB_PROJECT"
+
+      - name: Upload test artifacts
+        if: ${{ always() && inputs.suite != 'fast' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-hub-${{ inputs.project }}-${{ github.run_attempt }}
+          path: |
+            hub/reports/
+            hub/playwright-report/
+            hub/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
