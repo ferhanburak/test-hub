@@ -12,7 +12,7 @@ status: passed
 
 ## Amaç
 
-celtikci.av.tr adresinin ayakta olduğunu ve iletişim sayfasının doğrudan açıldığını her gece doğrulamak.
+celtikci.av.tr adresinin ayakta olduğunu ve iletişim sayfasının doğrudan açıldığını tam set çalıştırıldığında doğrulamak.
 
 ## Adımlar
 
