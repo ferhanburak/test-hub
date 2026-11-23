@@ -21,7 +21,7 @@ export default defineConfig({
     fs: { allow: [process.cwd(), targetDir] },
   },
   test: {
-    include: [`tests/${hubProject}/unit/**/*.test.mjs`],
+    include: [`tests/${hubProject}/unit/**/*.test.mjs`, 'tests/hub/**/*.test.mjs'],
     passWithNoTests: true,
     restoreMocks: false,
     reporters: ['default', 'json'],
