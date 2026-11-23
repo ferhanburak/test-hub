@@ -1,54 +1,10 @@
 #!/usr/bin/env node
-// Matches catalog cards with Playwright JSON results.
-// Usage: node scripts/report.mjs --project celtikci [--results path] [--out path] [--write]
+// Matches catalog cards with Playwright and Vitest JSON results.
+// Usage: node scripts/report.mjs --project celtikci [--results path] [--unit path] [--out path] [--write]
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-
-const ID_RE = /\b(?:CLT|SND|TRK|MLK|OPT|BAL)-(?:WEB|MOB)-\d{3}\b/g;
-const SEVERITY = ['skipped', 'passed', 'flaky', 'failed'];
-const OUTCOME = { expected: 'passed', unexpected: 'failed', flaky: 'flaky', skipped: 'skipped' };
-
-function readCard(file) {
-  const text = fs.readFileSync(file, 'utf8');
-  const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match) throw new Error(`Missing frontmatter: ${file}`);
-  const fields = {};
-  for (const line of match[1].split(/\r?\n/)) {
-    const pair = line.match(/^([\w-]+):\s*(.*)$/);
-    if (pair) fields[pair[1]] = pair[2].trim();
-  }
-  if (!fields.id) throw new Error(`Missing id: ${file}`);
-  return { ...fields, file };
-}
-
-function collectResults(suite, results = new Map()) {
-  for (const spec of suite.specs ?? []) {
-    const ids = spec.title.match(ID_RE) ?? [];
-    for (const id of ids) {
-      for (const run of spec.tests ?? []) {
-        const status = OUTCOME[run.status] ?? 'failed';
-        const current = results.get(id);
-        if (!current || SEVERITY.indexOf(status) > SEVERITY.indexOf(current)) results.set(id, status);
-      }
-    }
-  }
-  for (const child of suite.suites ?? []) collectResults(child, results);
-  return results;
-}
-
-function collectVitest(report, results) {
-  for (const file of report.testResults ?? []) {
-    for (const assertion of file.assertionResults ?? []) {
-      const status = assertion.status === 'passed' ? 'passed' : assertion.status === 'failed' ? 'failed' : 'skipped';
-      for (const id of assertion.title.match(ID_RE) ?? []) {
-        const current = results.get(id);
-        if (!current || SEVERITY.indexOf(status) > SEVERITY.indexOf(current)) results.set(id, status);
-      }
-    }
-  }
-  return results;
-}
+import { loadResults, readCards } from './lib/hub.mjs';
 
 const { values: args } = parseArgs({
   options: {
@@ -60,25 +16,16 @@ const { values: args } = parseArgs({
   },
 });
 
-if (!/^[a-z0-9-]+$/.test(args.project)) throw new Error(`Invalid project: ${args.project}`);
-const catalogDir = path.join('catalog', args.project);
-const cards = fs
-  .readdirSync(catalogDir)
-  .filter((name) => name.endsWith('.md'))
-  .sort()
-  .map((name) => readCard(path.join(catalogDir, name)));
-
-if (!fs.existsSync(args.results) && !fs.existsSync(args.unit)) {
+const cards = readCards(args.project);
+const { results, found } = loadResults({ playwright: args.results, unit: args.unit });
+if (!found) {
   console.error(`Results not found: ${args.results}, ${args.unit}`);
   process.exit(2);
 }
-const results = new Map();
-if (fs.existsSync(args.results)) collectResults(JSON.parse(fs.readFileSync(args.results, 'utf8')), results);
-if (fs.existsSync(args.unit)) collectVitest(JSON.parse(fs.readFileSync(args.unit, 'utf8')), results);
 
 const rows = cards.map((card) => {
   const result = results.get(card.id);
-  return { ...card, ran: Boolean(result), current: result ?? card.status };
+  return { ...card, ran: Boolean(result), current: result?.status ?? card.status };
 });
 const cardIds = new Set(cards.map((card) => card.id));
 const orphans = [...results.keys()].filter((id) => !cardIds.has(id)).sort();

@@ -110,3 +110,49 @@ jobs:
             hub/test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Upload results for issue sync
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-hub-results-${{ inputs.project }}-${{ github.run_attempt }}
+          path: hub/reports/*.json
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # Holds the only write token and never installs or runs project code.
+  sync-issues:
+    needs: test
+    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (needs.test.result == 'success' || needs.test.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out test-hub
+        uses: actions/checkout@v4
+        with:
+          repository: ferhanburak/test-hub
+          ref: ${{ inputs.hub-ref }}
+          path: hub
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Download results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: test-hub-results-${{ inputs.project }}-${{ github.run_attempt }}
+          path: results
+
+      - name: Sync GitHub Issues
+        working-directory: hub
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HUB_PROJECT: ${{ inputs.project }}
+        run: node scripts/issues.mjs --project "$HUB_PROJECT" --results ../results/results.json --unit ../results/unit.json
