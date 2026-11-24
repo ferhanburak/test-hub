@@ -69,6 +69,15 @@ jobs:
         working-directory: target
         run: npm test --if-present
 
+      # Projects can write Vitest JSON results here to include them in reports and issues.
+      - name: Collect project test results
+        if: always()
+        run: |
+          mkdir -p hub/reports
+          if [ -f target/test-results/test-hub-unit.json ]; then
+            cp target/test-results/test-hub-unit.json hub/reports/project-unit.json
+          fi
+
       - name: Install test-hub dependencies
         working-directory: hub
         run: npm ci
@@ -77,18 +86,28 @@ jobs:
         working-directory: hub
         run: npm run test:unit
 
+      - name: Detect test-hub browser tests
+        id: hubtests
+        working-directory: hub
+        run: |
+          if [ -d "tests/$HUB_PROJECT/local" ] || [ -d "tests/$HUB_PROJECT/live" ]; then
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "e2e=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build project
-        if: inputs.suite != 'fast'
+        if: inputs.suite != 'fast' && steps.hubtests.outputs.e2e == 'true'
         working-directory: target
         run: npm run build
 
       - name: Install Playwright browser
-        if: inputs.suite != 'fast'
+        if: inputs.suite != 'fast' && steps.hubtests.outputs.e2e == 'true'
         working-directory: hub
         run: npx playwright install --with-deps chromium
 
       - name: Run Playwright
-        if: inputs.suite != 'fast'
+        if: inputs.suite != 'fast' && steps.hubtests.outputs.e2e == 'true'
         working-directory: hub
         run: |
           if [ "$SUITE" = "full" ]; then export HUB_SUITE=all; else export HUB_SUITE=local; fi
@@ -97,7 +116,9 @@ jobs:
       - name: Report
         if: ${{ always() && hashFiles('hub/reports/*.json') != '' }}
         working-directory: hub
-        run: node scripts/report.mjs --project "$HUB_PROJECT"
+        run: |
+          if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
+          node scripts/report.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" --unit reports/unit.json --unit reports/project-unit.json
 
       - name: Upload test artifacts
         if: always()
@@ -123,7 +144,7 @@ jobs:
   # Holds the only write token and never installs or runs project code.
   sync-issues:
     needs: test
-    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (needs.test.result == 'success' || needs.test.result == 'failure') }}
+    if: ${{ always() && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.test.result == 'success' || needs.test.result == 'failure') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -136,6 +157,14 @@ jobs:
           repository: ferhanburak/test-hub
           ref: ${{ inputs.hub-ref }}
           path: hub
+          persist-credentials: false
+
+      # Only the test cards are checked out; project code is never installed or run here.
+      - name: Check out project test cards
+        uses: actions/checkout@v4
+        with:
+          path: target
+          sparse-checkout: tests/catalog
           persist-credentials: false
 
       - name: Set up Node
@@ -155,4 +184,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           HUB_PROJECT: ${{ inputs.project }}
-        run: node scripts/issues.mjs --project "$HUB_PROJECT" --results ../results/results.json --unit ../results/unit.json
+        run: |
+          if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
+          node scripts/issues.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" --results ../results/results.json \
+            --unit ../results/unit.json --unit ../results/project-unit.json

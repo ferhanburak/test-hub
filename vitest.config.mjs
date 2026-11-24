@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { defineConfig } from 'vitest/config';
@@ -5,8 +6,11 @@ import { defineConfig } from 'vitest/config';
 const hubProject = process.env.HUB_PROJECT || 'celtikci';
 if (!/^[a-z0-9-]+$/.test(hubProject)) throw new Error(`Invalid HUB_PROJECT: ${hubProject}`);
 
-const settingsUrl = pathToFileURL(path.resolve('tests', hubProject, 'project.mjs')).href;
-const { default: settings } = await import(settingsUrl);
+// Projects without browser tests in test-hub have no project.mjs.
+const settingsFile = path.resolve('tests', hubProject, 'project.mjs');
+const { default: settings } = fs.existsSync(settingsFile)
+  ? await import(pathToFileURL(settingsFile).href)
+  : { default: { repoDir: hubProject } };
 
 const targetDir = path.resolve(process.env.HUB_TARGET_DIR || path.join('..', settings.repoDir));
 const mocks = Object.fromEntries(

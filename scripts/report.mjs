@@ -10,16 +10,17 @@ const { values: args } = parseArgs({
   options: {
     project: { type: 'string', default: 'celtikci' },
     results: { type: 'string', default: 'reports/results.json' },
-    unit: { type: 'string', default: 'reports/unit.json' },
+    unit: { type: 'string', multiple: true, default: ['reports/unit.json'] },
+    catalog: { type: 'string' },
     out: { type: 'string', default: 'reports/summary.md' },
     write: { type: 'boolean', default: false },
   },
 });
 
-const cards = readCards(args.project);
+const cards = readCards(args.project, args.catalog);
 const { results, found } = loadResults({ playwright: args.results, unit: args.unit });
 if (!found) {
-  console.error(`Results not found: ${args.results}, ${args.unit}`);
+  console.error(`Results not found: ${[args.results, ...args.unit].join(', ')}`);
   process.exit(2);
 }
 

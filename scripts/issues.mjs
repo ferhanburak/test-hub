@@ -163,7 +163,8 @@ async function main() {
     options: {
       project: { type: 'string', default: 'celtikci' },
       results: { type: 'string', default: 'reports/results.json' },
-      unit: { type: 'string', default: 'reports/unit.json' },
+      unit: { type: 'string', multiple: true, default: ['reports/unit.json'] },
+    catalog: { type: 'string' },
     },
   });
   const { GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_SERVER_URL, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_API_URL } =
@@ -185,7 +186,7 @@ async function main() {
     token: GITHUB_TOKEN,
     baseUrl: GITHUB_API_URL || 'https://api.github.com',
   });
-  const summary = await syncIssues({ api, cards: readCards(args.project), results, project: args.project, runUrl });
+  const summary = await syncIssues({ api, cards: readCards(args.project, args.catalog), results, project: args.project, runUrl });
   console.log(JSON.stringify(summary));
 }
 
