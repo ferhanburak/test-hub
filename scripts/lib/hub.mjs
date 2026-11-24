@@ -18,9 +18,11 @@ function readCard(file) {
   return { ...fields, file };
 }
 
-export function readCards(project) {
+// Cards come from test-hub's catalog, or from the project repository when given.
+export function readCards(project, dir) {
   if (!/^[a-z0-9-]+$/.test(project)) throw new Error(`Invalid project: ${project}`);
-  const catalogDir = path.join('catalog', project);
+  const catalogDir = dir || path.join('catalog', project);
+  if (!fs.existsSync(catalogDir)) return [];
   return fs
     .readdirSync(catalogDir)
     .filter((name) => name.endsWith('.md'))
@@ -72,8 +74,9 @@ export function loadResults({ playwright, unit }) {
     collectPlaywright(JSON.parse(fs.readFileSync(playwright, 'utf8')), results);
     found = true;
   }
-  if (unit && fs.existsSync(unit)) {
-    collectVitest(JSON.parse(fs.readFileSync(unit, 'utf8')), results);
+  for (const file of [unit].flat().filter(Boolean)) {
+    if (!fs.existsSync(file)) continue;
+    collectVitest(JSON.parse(fs.readFileSync(file, 'utf8')), results);
     found = true;
   }
   return { results, found };
