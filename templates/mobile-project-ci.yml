@@ -1,0 +1,26 @@
+# Copy to <project>/.github/workflows/test-hub.yml and set `project` and
+# `working-directory`. The `test-script` must write Jest or Vitest JSON to
+# <working-directory>/test-results/test-hub-unit.json, e.g. for Jest:
+#   "test:hub": "jest --ci --json --outputFile=test-results/test-hub-unit.json"
+name: test-hub
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    permissions:
+      contents: read
+      issues: write
+    uses: ferhanburak/test-hub/.github/workflows/mobile-ci.yml@main
+    with:
+      project: tracksnap
+      working-directory: mobile
+      test-script: test:hub
+      suite: ${{ github.event_name == 'workflow_dispatch' && 'full' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'e2e' || 'fast' }}

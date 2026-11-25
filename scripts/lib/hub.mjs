@@ -57,11 +57,14 @@ export function collectPlaywright(suite, results = new Map()) {
   return results;
 }
 
+// Vitest and Jest write the same JSON shape. The ID may sit in the test title
+// or in an enclosing describe(), so match against the full name.
 export function collectVitest(report, results = new Map()) {
   for (const file of report.testResults ?? []) {
     for (const assertion of file.assertionResults ?? []) {
       const status = ['passed', 'failed'].includes(assertion.status) ? assertion.status : 'skipped';
-      record(results, assertion.title, status, assertion.failureMessages ?? []);
+      const name = assertion.fullName || [...(assertion.ancestorTitles ?? []), assertion.title].join(' ');
+      record(results, name, status, assertion.failureMessages ?? []);
     }
   }
   return results;

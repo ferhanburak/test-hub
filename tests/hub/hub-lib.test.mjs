@@ -34,6 +34,22 @@ describe('hub library', () => {
     expect(results.get('SND-WEB-001')).toEqual({ status: 'failed', errors: ['boom'] });
   });
 
+  test('finds IDs in an enclosing describe block (Jest and Vitest full names)', () => {
+    const file = path.join(dir, 'jest.json');
+    fs.writeFileSync(file, JSON.stringify({
+      testResults: [{
+        assertionResults: [
+          { ancestorTitles: ['TRK-MOB-007 GPS'], title: 'accepts movement', fullName: 'TRK-MOB-007 GPS accepts movement', status: 'passed', failureMessages: [] },
+          { ancestorTitles: ['TRK-MOB-007 GPS'], title: 'rejects jumps', fullName: 'TRK-MOB-007 GPS rejects jumps', status: 'failed', failureMessages: ['jump'] },
+          { ancestorTitles: ['TRK-MOB-008 zones'], title: 'drops points', status: 'pending', failureMessages: [] },
+        ],
+      }],
+    }));
+    const { results } = loadResults({ unit: file });
+    expect(results.get('TRK-MOB-007')).toEqual({ status: 'failed', errors: ['jump'] });
+    expect(results.get('TRK-MOB-008').status).toBe('skipped');
+  });
+
   test('still accepts a single result file', () => {
     expect(loadResults({ unit: path.join(dir, 'hub.json') }).results.has('CLT-WEB-005')).toBe(true);
   });
