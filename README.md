@@ -24,3 +24,7 @@ npm run report -- --project celtikci
 `HUB_SUITE`: `local` (form istekleri yakalanır), `live` (salt okunur canlı kontrol), `all`.
 
 Yeni bir web projesini bağlamak için `templates/web-project-ci.yml` dosyasını o projenin `.github/workflows/` klasörüne kopyala.
+
+## Mobil projeler
+
+Mobil (Expo) projeler `templates/mobile-project-ci.yml` ile `mobile-ci.yml` workflow'unu çağırır. Uygulamanın Jest testleri projenin kendi reposunda çalışır ve sonucu `test-results/test-hub-unit.json` dosyasına yazar; test-hub bunu projenin `tests/catalog/` kartlarıyla eşler. Kart ID'si testin adında ya da onu saran `describe` bloğunda geçebilir. Maestro uçtan uca akışları şimdilik lokalde çalışır.

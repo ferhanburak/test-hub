@@ -1,0 +1,183 @@
+name: mobile-ci
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Folder name under catalog/ (or the project's tests/catalog)
+        required: true
+        type: string
+      suite:
+        description: "fast (unit tests), e2e and full (unit tests now; Maestro E2E runs locally for now)"
+        required: false
+        type: string
+        default: fast
+      working-directory:
+        description: App folder inside the project repository (package.json lives here)
+        required: false
+        type: string
+        default: .
+      test-script:
+        description: npm script that runs the unit tests and writes test-results/test-hub-unit.json
+        required: false
+        type: string
+        default: test
+      node-version:
+        required: false
+        type: string
+        default: '22'
+      hub-ref:
+        description: test-hub ref to run
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HUB_PROJECT: ${{ inputs.project }}
+      SUITE: ${{ inputs.suite }}
+      APP_DIR: ${{ inputs.working-directory }}
+      TEST_SCRIPT: ${{ inputs.test-script }}
+      HUB_TARGET_DIR: ${{ github.workspace }}/target
+    steps:
+      - name: Validate inputs
+        run: |
+          case "$SUITE" in fast|e2e|full) ;; *) echo "Invalid suite: $SUITE"; exit 1 ;; esac
+          if ! printf '%s' "$APP_DIR" | grep -Eq '^[A-Za-z0-9._/-]+$' || printf '%s' "$APP_DIR" | grep -q '\.\.'; then
+            echo "Invalid working-directory: $APP_DIR"; exit 1
+          fi
+          if ! printf '%s' "$TEST_SCRIPT" | grep -Eq '^[A-Za-z0-9:_-]+$'; then
+            echo "Invalid test-script: $TEST_SCRIPT"; exit 1
+          fi
+
+      - name: Check out project
+        uses: actions/checkout@v4
+        with:
+          path: target
+          persist-credentials: false
+
+      - name: Check out test-hub
+        uses: actions/checkout@v4
+        with:
+          repository: ferhanburak/test-hub
+          ref: ${{ inputs.hub-ref }}
+          path: hub
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: |
+            target/${{ inputs.working-directory }}/package-lock.json
+            hub/package-lock.json
+
+      - name: Install app dependencies
+        working-directory: target/${{ inputs.working-directory }}
+        run: npm ci
+
+      - name: Run app unit tests
+        working-directory: target/${{ inputs.working-directory }}
+        run: |
+          mkdir -p test-results
+          npm run "$TEST_SCRIPT" --if-present
+
+      # Apps write Jest or Vitest JSON here to include it in reports and issues.
+      - name: Collect app test results
+        if: always()
+        run: |
+          mkdir -p hub/reports
+          RESULT="target/$APP_DIR/test-results/test-hub-unit.json"
+          if [ -f "$RESULT" ]; then cp "$RESULT" hub/reports/project-unit.json; fi
+
+      - name: Install test-hub dependencies
+        working-directory: hub
+        run: npm ci
+
+      - name: Run test-hub unit tests
+        working-directory: hub
+        run: npm run test:unit
+
+      - name: Mobile E2E
+        if: inputs.suite != 'fast'
+        run: echo "::notice::Maestro E2E flows run locally for now; CI runs unit tests only."
+
+      - name: Report
+        if: ${{ always() && hashFiles('hub/reports/*.json') != '' }}
+        working-directory: hub
+        run: |
+          if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
+          node scripts/report.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" --unit reports/unit.json --unit reports/project-unit.json
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-hub-${{ inputs.project }}-${{ github.run_attempt }}
+          path: hub/reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload results for issue sync
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-hub-results-${{ inputs.project }}-${{ github.run_attempt }}
+          path: hub/reports/*.json
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # Holds the only write token and never installs or runs project code.
+  sync-issues:
+    needs: test
+    if: ${{ always() && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.test.result == 'success' || needs.test.result == 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out test-hub
+        uses: actions/checkout@v4
+        with:
+          repository: ferhanburak/test-hub
+          ref: ${{ inputs.hub-ref }}
+          path: hub
+          persist-credentials: false
+
+      # Only the test cards are checked out; project code is never installed or run here.
+      - name: Check out project test cards
+        uses: actions/checkout@v4
+        with:
+          path: target
+          sparse-checkout: tests/catalog
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Download results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: test-hub-results-${{ inputs.project }}-${{ github.run_attempt }}
+          path: results
+
+      - name: Sync GitHub Issues
+        working-directory: hub
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HUB_PROJECT: ${{ inputs.project }}
+        run: |
+          if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
+          node scripts/issues.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" \
+            --unit ../results/unit.json --unit ../results/project-unit.json
