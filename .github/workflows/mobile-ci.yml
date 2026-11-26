@@ -89,21 +89,21 @@ jobs:
           node-version: ${{ inputs.node-version }}
           cache: npm
           cache-dependency-path: |
-            target/${{ inputs.working-directory }}/package-lock.json
+            ${{ inputs.working-directory == '.' && 'target/package-lock.json' || format('target/{0}/package-lock.json', inputs.working-directory) }}
             hub/package-lock.json
 
       - name: Install app dependencies
-        working-directory: target/${{ inputs.working-directory }}
+        working-directory: ${{ inputs.working-directory == '.' && 'target' || format('target/{0}', inputs.working-directory) }}
         run: npm ci
 
       # Postgres with the project's supabase/migrations applied (Docker is available on the runner).
       - name: Start local Supabase database
         if: inputs.supabase
-        working-directory: target/${{ inputs.working-directory }}
+        working-directory: ${{ inputs.working-directory == '.' && 'target' || format('target/{0}', inputs.working-directory) }}
         run: npx --yes "supabase@$SUPABASE_CLI" db start
 
       - name: Run app unit tests
-        working-directory: target/${{ inputs.working-directory }}
+        working-directory: ${{ inputs.working-directory == '.' && 'target' || format('target/{0}', inputs.working-directory) }}
         env:
           SUPABASE_DB_URL: ${{ inputs.supabase && 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' || '' }}
         run: |
