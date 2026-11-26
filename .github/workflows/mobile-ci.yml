@@ -22,6 +22,15 @@ on:
         required: false
         type: string
         default: test
+      supabase:
+        description: Start a local Supabase database (migrations applied) for RLS tests; exposes SUPABASE_DB_URL
+        required: false
+        type: boolean
+        default: false
+      supabase-cli-version:
+        required: false
+        type: string
+        default: 2.122.1
       node-version:
         required: false
         type: string
@@ -44,6 +53,7 @@ jobs:
       SUITE: ${{ inputs.suite }}
       APP_DIR: ${{ inputs.working-directory }}
       TEST_SCRIPT: ${{ inputs.test-script }}
+      SUPABASE_CLI: ${{ inputs.supabase-cli-version }}
       HUB_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - name: Validate inputs
@@ -54,6 +64,9 @@ jobs:
           fi
           if ! printf '%s' "$TEST_SCRIPT" | grep -Eq '^[A-Za-z0-9:_-]+$'; then
             echo "Invalid test-script: $TEST_SCRIPT"; exit 1
+          fi
+          if ! printf '%s' "$SUPABASE_CLI" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid supabase-cli-version: $SUPABASE_CLI"; exit 1
           fi
 
       - name: Check out project
@@ -83,8 +96,16 @@ jobs:
         working-directory: target/${{ inputs.working-directory }}
         run: npm ci
 
+      # Postgres with the project's supabase/migrations applied (Docker is available on the runner).
+      - name: Start local Supabase database
+        if: inputs.supabase
+        working-directory: target/${{ inputs.working-directory }}
+        run: npx --yes "supabase@$SUPABASE_CLI" db start
+
       - name: Run app unit tests
         working-directory: target/${{ inputs.working-directory }}
+        env:
+          SUPABASE_DB_URL: ${{ inputs.supabase && 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' || '' }}
         run: |
           mkdir -p test-results
           npm run "$TEST_SCRIPT" --if-present
