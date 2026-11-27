@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { loadResults, readCards } from '../../scripts/lib/hub.mjs';
+import { collectJunit, loadResults, readCards } from '../../scripts/lib/hub.mjs';
 
 let dir;
 const vitestReport = (title, status) => ({ testResults: [{ assertionResults: [{ title, status, failureMessages: status === 'failed' ? ['boom'] : [] }] }] });
@@ -52,5 +53,69 @@ describe('hub library', () => {
 
   test('still accepts a single result file', () => {
     expect(loadResults({ unit: path.join(dir, 'hub.json') }).results.has('CLT-WEB-005')).toBe(true);
+  });
+});
+
+// A real `node --test` run, so a change in Node's JUnit reporter shows up here.
+const NODE_TEST_FILE = `
+import { describe, it, test } from 'node:test';
+import assert from 'node:assert';
+describe('TRK-MOB-011 module <a> & "b"', () => {
+  it('passes', () => {});
+  describe('nested', () => {
+    it('fails', () => { assert.equal(1, 2); });
+  });
+});
+describe('TRK-MOB-012 all fine', () => {
+  it('passes', () => {});
+  it.skip('is skipped', () => {});
+});
+describe('TRK-MOB-013 only skipped', () => {
+  it.todo('later');
+});
+test('top-level TRK-MOB-014 test', () => {});
+test('untagged test', () => {});
+`;
+
+describe('JUnit results (node --test)', () => {
+  test('reads nested suites, failures and skips from the node:test reporter', () => {
+    const source = path.join(dir, 'sample.test.mjs');
+    const xml = path.join(dir, 'node-test.xml');
+    fs.writeFileSync(source, NODE_TEST_FILE);
+    spawnSync(process.execPath, ['--test', '--test-reporter=junit', `--test-reporter-destination=${xml}`, source], {
+      encoding: 'utf8',
+    });
+    const { results, found } = loadResults({ unit: [xml] });
+    expect(found).toBe(true);
+    expect(results.get('TRK-MOB-011').status).toBe('failed');
+    expect(results.get('TRK-MOB-011').errors.join('\n')).toContain('1 == 2');
+    expect(results.get('TRK-MOB-012')).toEqual({ status: 'passed', errors: [] });
+    expect(results.get('TRK-MOB-013').status).toBe('skipped');
+    expect(results.get('TRK-MOB-014').status).toBe('passed');
+    expect([...results.keys()].sort()).toEqual(['TRK-MOB-011', 'TRK-MOB-012', 'TRK-MOB-013', 'TRK-MOB-014']);
+  });
+
+  test('reads classname-style JUnit and decodes entities once', () => {
+    const results = collectJunit(`<?xml version="1.0"?>
+<testsuites>
+  <testsuite name="rules" tests="3">
+    <testcase classname="OPT-MOB-002 RLS" name="blocks &lt;anon&gt;"/>
+    <testcase classname="rules" name="OPT-MOB-003 errors"><error message="crash &amp; burn"/></testcase>
+    <testcase classname="rules" name="OPT-MOB-004 fails"><failure message="short">long &amp;lt;trace&amp;gt;</failure></testcase>
+  </testsuite>
+  <testsuite name="empty"/>
+  <testcase name="OPT-MOB-005 after an empty suite"/>
+</testsuites>`);
+    expect(results.get('OPT-MOB-002')).toEqual({ status: 'passed', errors: [] });
+    expect(results.get('OPT-MOB-003')).toEqual({ status: 'failed', errors: ['crash & burn'] });
+    expect(results.get('OPT-MOB-004')).toEqual({ status: 'failed', errors: ['long &lt;trace&gt;'] });
+    expect(results.get('OPT-MOB-005').status).toBe('passed');
+  });
+
+  test('merges JUnit and Jest files for the same card, keeping the worst status', () => {
+    const xml = path.join(dir, 'merge.xml');
+    fs.writeFileSync(xml, '<testsuites><testcase name="SND-WEB-001 ok"/></testsuites>');
+    const { results } = loadResults({ unit: [xml, path.join(dir, 'project.json')] });
+    expect(results.get('SND-WEB-001')).toEqual({ status: 'failed', errors: ['boom'] });
   });
 });

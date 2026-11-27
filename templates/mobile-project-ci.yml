@@ -2,6 +2,11 @@
 # `working-directory`. The `test-script` must write Jest or Vitest JSON to
 # <working-directory>/test-results/test-hub-unit.json, e.g. for Jest:
 #   "test:hub": "jest --ci --json --outputFile=test-results/test-hub-unit.json"
+# Optional: `extra-test-script` runs another npm script (in `extra-working-directory`)
+# for tests outside the app, writing test-results/test-hub-*.json or JUnit
+# test-hub-*.xml, e.g. `node --test --test-reporter=junit
+# --test-reporter-destination=test-results/test-hub-functions.xml`.
+# `firebase-emulators: true` sets up Java 21 for the Firebase Emulator Suite.
 name: test-hub
 
 on:
