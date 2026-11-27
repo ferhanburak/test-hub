@@ -24,6 +24,10 @@ jobs:
       contents: read
       issues: write
     uses: ferhanburak/test-hub/.github/workflows/mobile-ci.yml@main
+    # Optional: Telegram message when a critical test newly breaks or is fixed.
+    secrets:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     with:
       project: tracksnap
       working-directory: mobile

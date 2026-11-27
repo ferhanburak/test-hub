@@ -56,6 +56,14 @@ on:
         type: string
         default: main
 
+    secrets:
+      TELEGRAM_BOT_TOKEN:
+        description: Optional Telegram bot token; with TELEGRAM_CHAT_ID, critical tests that newly break or get fixed are reported
+        required: false
+      TELEGRAM_CHAT_ID:
+        description: Optional Telegram chat that receives the notifications
+        required: false
+
 permissions:
   contents: read
 
@@ -262,4 +270,17 @@ jobs:
           if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
           UNIT=(--unit ../results/unit.json)
           for file in ../results/project/*; do if [ -f "$file" ]; then UNIT+=(--unit "$file"); fi; done
-          node scripts/issues.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" "${UNIT[@]}"
+          node scripts/issues.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" "${UNIT[@]}" --summary ../issue-summary.json
+
+      # Only this step sees the Telegram secrets; it reads results and cards, never runs project code.
+      - name: Notify Telegram
+        working-directory: hub
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HUB_PROJECT: ${{ inputs.project }}
+        run: |
+          if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
+          UNIT=(--unit ../results/unit.json)
+          for file in ../results/project/*; do if [ -f "$file" ]; then UNIT+=(--unit "$file"); fi; done
+          node scripts/notify.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" --summary ../issue-summary.json "${UNIT[@]}"

@@ -32,3 +32,27 @@ Mobil (Expo) projeler `templates/mobile-project-ci.yml` ile `mobile-ci.yml` work
 Uygulama dışındaki testler (ör. backend fonksiyonları, güvenlik kuralları) için `extra-test-script` verilir: workflow bu npm betiğini `extra-working-directory` klasöründe `npm ci` sonrası çalıştırır. Betik sonuçlarını `test-results/test-hub-*.json` (Jest/Vitest) ya da `test-hub-*.xml` (JUnit) olarak yazar. `node --test` için `--test-reporter=junit --test-reporter-destination=test-results/test-hub-<ad>.xml` yeterlidir; iç içe `describe` başlıkları JUnit'te `testsuite` adı olarak gelir, kart ID'si onlarda da geçebilir. Firebase Emulator Suite kullanan projeler `firebase-emulators: true` verir (Java 21 kurulur, emülatör indirmeleri önbelleğe alınır).
 
 Supabase kullanan projeler `supabase: true` verir: workflow, Supabase CLI ile projenin `supabase/migrations` dosyalarını uygulanmış bir Postgres başlatır ve testlere `SUPABASE_DB_URL` ortam değişkenini verir. RLS testleri bu bağlantıyla `authenticated` ve `anon` rollerine geçip başka kullanıcının satırlarına erişmeyi dener. Docker gerektirdiği için bu testler lokalde `SUPABASE_DB_URL` yoksa atlanır.
+
+## Telegram bildirimi
+
+Ana dalda kritik bir test ilk kez kaldığında (Issue açıldığında) ya da tekrar geçtiğinde (Issue kapandığında) Telegram'a tek mesaj gider. Aynı test kalmaya devam ederse yeni mesaj gitmez. Kararsız testler ve PR koşuları bildirim üretmez. Mesajı Issue'ları eşitleyen iş gönderir; bu iş proje kodunu kurmaz ve çalıştırmaz, Telegram secret'larını da yalnızca bildirim adımı görür.
+
+1. Telegram'da @BotFather ile bir bot oluştur ve token'ı al.
+2. Bota bir mesaj yaz, sonra `https://api.telegram.org/bot<token>/getUpdates` adresinde `chat.id` değerini bul.
+3. Bildirim almak istediğin her proje reposuna iki secret ekle:
+
+```powershell
+gh secret set TELEGRAM_BOT_TOKEN --repo <sahip>/<repo>
+```
+
+```powershell
+gh secret set TELEGRAM_CHAT_ID --repo <sahip>/<repo>
+```
+
+4. Projenin `test-hub.yml` dosyasına şablondaki `secrets:` bloğunu ekle. Secret'lar yoksa adım hiçbir şey yapmadan geçer.
+
+Bağlantıyı lokalde denemek için:
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN = '<token>'; $env:TELEGRAM_CHAT_ID = '<chat id>'; node scripts/notify.mjs --ping
+```

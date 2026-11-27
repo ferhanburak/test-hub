@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Syncs test results to GitHub Issues: opens on failure, comments on repeat, closes on pass.
-// Usage: node scripts/issues.mjs --project celtikci --results path --unit path
+// Usage: node scripts/issues.mjs --project celtikci --results path --unit path [--summary path]
+import fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { loadResults, readCards } from './lib/hub.mjs';
@@ -164,7 +165,8 @@ async function main() {
       project: { type: 'string', default: 'celtikci' },
       results: { type: 'string', default: 'reports/results.json' },
       unit: { type: 'string', multiple: true, default: ['reports/unit.json'] },
-    catalog: { type: 'string' },
+      catalog: { type: 'string' },
+      summary: { type: 'string' },
     },
   });
   const { GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_SERVER_URL, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_API_URL } =
@@ -188,6 +190,9 @@ async function main() {
   });
   const summary = await syncIssues({ api, cards: readCards(args.project, args.catalog), results, project: args.project, runUrl });
   console.log(JSON.stringify(summary));
+  // notify.mjs reads this to report only tests that changed state.
+  if (args.summary) fs.writeFileSync(args.summary, `${JSON.stringify(summary)}
+`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

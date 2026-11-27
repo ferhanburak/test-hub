@@ -22,6 +22,14 @@ on:
         type: string
         default: main
 
+    secrets:
+      TELEGRAM_BOT_TOKEN:
+        description: Optional Telegram bot token; with TELEGRAM_CHAT_ID, critical tests that newly break or get fixed are reported
+        required: false
+      TELEGRAM_CHAT_ID:
+        description: Optional Telegram chat that receives the notifications
+        required: false
+
 permissions:
   contents: read
 
@@ -187,4 +195,16 @@ jobs:
         run: |
           if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
           node scripts/issues.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" --results ../results/results.json \
-            --unit ../results/unit.json --unit ../results/project-unit.json
+            --unit ../results/unit.json --unit ../results/project-unit.json --summary ../issue-summary.json
+
+      # Only this step sees the Telegram secrets; it reads results and cards, never runs project code.
+      - name: Notify Telegram
+        working-directory: hub
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HUB_PROJECT: ${{ inputs.project }}
+        run: |
+          if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
+          node scripts/notify.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" --summary ../issue-summary.json \
+            --results ../results/results.json --unit ../results/unit.json --unit ../results/project-unit.json
