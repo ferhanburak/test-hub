@@ -32,3 +32,7 @@ Mobil (Expo) projeler `templates/mobile-project-ci.yml` ile `mobile-ci.yml` work
 Uygulama dışındaki testler (ör. backend fonksiyonları, güvenlik kuralları) için `extra-test-script` verilir: workflow bu npm betiğini `extra-working-directory` klasöründe `npm ci` sonrası çalıştırır. Betik sonuçlarını `test-results/test-hub-*.json` (Jest/Vitest) ya da `test-hub-*.xml` (JUnit) olarak yazar. `node --test` için `--test-reporter=junit --test-reporter-destination=test-results/test-hub-<ad>.xml` yeterlidir; iç içe `describe` başlıkları JUnit'te `testsuite` adı olarak gelir, kart ID'si onlarda da geçebilir. Firebase Emulator Suite kullanan projeler `firebase-emulators: true` verir (Java 21 kurulur, emülatör indirmeleri önbelleğe alınır).
 
 Supabase kullanan projeler `supabase: true` verir: workflow, Supabase CLI ile projenin `supabase/migrations` dosyalarını uygulanmış bir Postgres başlatır ve testlere `SUPABASE_DB_URL` ortam değişkenini verir. RLS testleri bu bağlantıyla `authenticated` ve `anon` rollerine geçip başka kullanıcının satırlarına erişmeyi dener. Docker gerektirdiği için bu testler lokalde `SUPABASE_DB_URL` yoksa atlanır.
+
+## Bildirim
+
+Kritik öncelikli bir test kaldığında açılan Issue repo sahibine atanır. GitHub Mobile, atanan işler için telefona anlık bildirim gönderir; bunun için uygulamada bildirimleri açmak yeterlidir. Diğer öncelikler ve kararsız testler atanmadan açılır. Repo sahibi atanamıyorsa (örneğin bir organizasyon) Issue atamasız açılır.

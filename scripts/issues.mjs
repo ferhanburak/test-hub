@@ -50,7 +50,9 @@ function labelsFor({ card, project, status }) {
   return labels;
 }
 
-export async function syncIssues({ api, cards, results, project, runUrl }) {
+// Issues for failed critical tests are assigned to `assignee` (the repository owner
+// in CI), so GitHub Mobile sends a push notification for them.
+export async function syncIssues({ api, cards, results, project, runUrl, assignee }) {
   const cardsById = new Map(cards.map((card) => [card.id, card]));
   const openById = new Map();
   for (const issue of await api.listOpenIssues(BASE_LABEL)) {
@@ -84,11 +86,19 @@ export async function syncIssues({ api, cards, results, project, runUrl }) {
     await ensureLabels(labels);
 
     if (!issue) {
-      await api.createIssue({
+      const newIssue = {
         title: `[${id}] ${card?.title ?? 'Test kaldı'}`,
         body: issueBody({ id, card, result, runUrl }),
         labels,
-      });
+      };
+      const assign = assignee && card?.priority === 'critical' && result.status === 'failed';
+      try {
+        await api.createIssue(assign ? { ...newIssue, assignees: [assignee] } : newIssue);
+      } catch (error) {
+        // An owner that cannot be assigned (e.g. an organization) must not block the issue.
+        if (!assign || error.status !== 422) throw error;
+        await api.createIssue(newIssue);
+      }
       summary.opened.push(id);
       continue;
     }
@@ -124,7 +134,11 @@ export function createGitHubApi({ repo, token, baseUrl = 'https://api.github.com
   };
   const send = async (method, url, body) => {
     const response = await request(method, url, body);
-    if (!response.ok) throw new Error(`GitHub API ${method} ${url} failed: ${response.status}`);
+    if (!response.ok) {
+      throw Object.assign(new Error(`GitHub API ${method} ${url} failed: ${response.status}`), {
+        status: response.status,
+      });
+    }
     return response.status === 204 ? null : response.json();
   };
   const paginate = async (url) => {
@@ -167,8 +181,15 @@ async function main() {
     catalog: { type: 'string' },
     },
   });
-  const { GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_SERVER_URL, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_API_URL } =
-    process.env;
+  const {
+    GITHUB_TOKEN,
+    GITHUB_REPOSITORY,
+    GITHUB_REPOSITORY_OWNER,
+    GITHUB_SERVER_URL,
+    GITHUB_RUN_ID,
+    GITHUB_RUN_ATTEMPT,
+    GITHUB_API_URL,
+  } = process.env;
   if (!GITHUB_TOKEN || !GITHUB_REPOSITORY || !GITHUB_RUN_ID) {
     throw new Error('GITHUB_TOKEN, GITHUB_REPOSITORY and GITHUB_RUN_ID are required');
   }
@@ -186,7 +207,14 @@ async function main() {
     token: GITHUB_TOKEN,
     baseUrl: GITHUB_API_URL || 'https://api.github.com',
   });
-  const summary = await syncIssues({ api, cards: readCards(args.project, args.catalog), results, project: args.project, runUrl });
+  const summary = await syncIssues({
+    api,
+    cards: readCards(args.project, args.catalog),
+    results,
+    project: args.project,
+    runUrl,
+    assignee: GITHUB_REPOSITORY_OWNER,
+  });
   console.log(JSON.stringify(summary));
 }
 
