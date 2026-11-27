@@ -27,6 +27,21 @@ on:
         required: false
         type: boolean
         default: false
+      extra-test-script:
+        description: "Optional npm script for tests outside the app (e.g. backend functions or security rules), run in extra-working-directory after npm ci. Writes test-results/test-hub-*.json (Jest/Vitest) or test-hub-*.xml (JUnit, e.g. node --test --test-reporter=junit)"
+        required: false
+        type: string
+        default: ''
+      extra-working-directory:
+        description: Folder inside the project repository for extra-test-script (package.json lives here)
+        required: false
+        type: string
+        default: .
+      firebase-emulators:
+        description: Set up Java 21 and cache the Firebase Emulator Suite downloads for extra-test-script
+        required: false
+        type: boolean
+        default: false
       supabase-cli-version:
         required: false
         type: string
@@ -47,12 +62,14 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       HUB_PROJECT: ${{ inputs.project }}
       SUITE: ${{ inputs.suite }}
       APP_DIR: ${{ inputs.working-directory }}
       TEST_SCRIPT: ${{ inputs.test-script }}
+      EXTRA_DIR: ${{ inputs.extra-working-directory }}
+      EXTRA_SCRIPT: ${{ inputs.extra-test-script }}
       SUPABASE_CLI: ${{ inputs.supabase-cli-version }}
       HUB_TARGET_DIR: ${{ github.workspace }}/target
     steps:
@@ -64,6 +81,12 @@ jobs:
           fi
           if ! printf '%s' "$TEST_SCRIPT" | grep -Eq '^[A-Za-z0-9:_-]+$'; then
             echo "Invalid test-script: $TEST_SCRIPT"; exit 1
+          fi
+          if ! printf '%s' "$EXTRA_DIR" | grep -Eq '^[A-Za-z0-9._/-]+$' || printf '%s' "$EXTRA_DIR" | grep -q '\.\.'; then
+            echo "Invalid extra-working-directory: $EXTRA_DIR"; exit 1
+          fi
+          if [ -n "$EXTRA_SCRIPT" ] && ! printf '%s' "$EXTRA_SCRIPT" | grep -Eq '^[A-Za-z0-9:_-]+$'; then
+            echo "Invalid extra-test-script: $EXTRA_SCRIPT"; exit 1
           fi
           if ! printf '%s' "$SUPABASE_CLI" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "Invalid supabase-cli-version: $SUPABASE_CLI"; exit 1
@@ -90,6 +113,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             ${{ inputs.working-directory == '.' && 'target/package-lock.json' || format('target/{0}/package-lock.json', inputs.working-directory) }}
+            ${{ inputs.extra-test-script != '' && (inputs.extra-working-directory == '.' && 'target/package-lock.json' || format('target/{0}/package-lock.json', inputs.extra-working-directory)) || (inputs.working-directory == '.' && 'target/package-lock.json' || format('target/{0}/package-lock.json', inputs.working-directory)) }}
             hub/package-lock.json
 
       - name: Install app dependencies
@@ -110,13 +134,45 @@ jobs:
           mkdir -p test-results
           npm run "$TEST_SCRIPT" --if-present
 
-      # Apps write Jest or Vitest JSON here to include it in reports and issues.
-      - name: Collect app test results
+      - name: Set up Java for Firebase emulators
+        if: inputs.firebase-emulators && inputs.extra-test-script != ''
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Firebase emulators
+        if: inputs.firebase-emulators && inputs.extra-test-script != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}-${{ hashFiles('target/firebase*.json', 'target/package-lock.json') }}
+
+      # Runs even when the app tests fail, so every card gets a result.
+      - name: Run extra tests
+        if: ${{ !cancelled() && inputs.extra-test-script != '' }}
+        working-directory: ${{ inputs.extra-working-directory == '.' && 'target' || format('target/{0}', inputs.extra-working-directory) }}
+        run: |
+          if [ "$(realpath .)" != "$(realpath "$GITHUB_WORKSPACE/target/$APP_DIR")" ]; then npm ci; fi
+          mkdir -p test-results
+          npm run "$EXTRA_SCRIPT"
+
+      # Projects write test-results/test-hub-*.json (Jest/Vitest) or
+      # test-hub-*.xml (JUnit) to include them in reports and issues.
+      - name: Collect project test results
         if: always()
         run: |
-          mkdir -p hub/reports
-          RESULT="target/$APP_DIR/test-results/test-hub-unit.json"
-          if [ -f "$RESULT" ]; then cp "$RESULT" hub/reports/project-unit.json; fi
+          mkdir -p hub/reports/project
+          collect() {
+            for file in "target/$1/test-results"/test-hub-*.json "target/$1/test-results"/test-hub-*.xml; do
+              if [ -f "$file" ]; then cp "$file" "hub/reports/project/$2-$(basename "$file")"; fi
+            done
+          }
+          collect "$APP_DIR" app
+          if [ -n "$EXTRA_SCRIPT" ] && [ "$(realpath "target/$EXTRA_DIR")" != "$(realpath "target/$APP_DIR")" ]; then
+            collect "$EXTRA_DIR" extra
+          fi
+          ls -l hub/reports/project
 
       - name: Install test-hub dependencies
         working-directory: hub
@@ -135,7 +191,9 @@ jobs:
         working-directory: hub
         run: |
           if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
-          node scripts/report.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" --unit reports/unit.json --unit reports/project-unit.json
+          UNIT=(--unit reports/unit.json)
+          for file in reports/project/*; do if [ -f "$file" ]; then UNIT+=(--unit "$file"); fi; done
+          node scripts/report.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" "${UNIT[@]}"
 
       - name: Upload test artifacts
         if: always()
@@ -151,7 +209,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-hub-results-${{ inputs.project }}-${{ github.run_attempt }}
-          path: hub/reports/*.json
+          path: |
+            hub/reports/*.json
+            hub/reports/project/
           if-no-files-found: ignore
           retention-days: 1
 
@@ -200,5 +260,6 @@ jobs:
           HUB_PROJECT: ${{ inputs.project }}
         run: |
           if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
-          node scripts/issues.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" \
-            --unit ../results/unit.json --unit ../results/project-unit.json
+          UNIT=(--unit ../results/unit.json)
+          for file in ../results/project/*; do if [ -f "$file" ]; then UNIT+=(--unit "$file"); fi; done
+          node scripts/issues.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" "${UNIT[@]}"

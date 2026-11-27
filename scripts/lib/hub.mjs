@@ -70,6 +70,74 @@ export function collectVitest(report, results = new Map()) {
   return results;
 }
 
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+function decodeXml(text) {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (entity, code) => {
+    if (code[0] === '#') {
+      const point = code[1].toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : Number(code.slice(1));
+      return Number.isFinite(point) ? String.fromCodePoint(point) : entity;
+    }
+    return ENTITIES[code] ?? entity;
+  });
+}
+
+function xmlAttributes(source) {
+  const attributes = {};
+  for (const [, name, double, single] of source.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+    attributes[name] = decodeXml(double ?? single);
+  }
+  return attributes;
+}
+
+// JUnit XML, e.g. from `node --test --test-reporter=junit`. Nested <testsuite>
+// names play the role of describe() blocks, so the ID may sit in any of them.
+const XML_TAG_RE = /<(\/?)(testsuite|testcase|failure|error|skipped)\b((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
+export function collectJunit(xml, results = new Map()) {
+  const suites = [];
+  let testcase = null;
+  let failure = null;
+  const finish = () => {
+    const status = testcase.errors.length || testcase.failed ? 'failed' : testcase.skipped ? 'skipped' : 'passed';
+    record(results, testcase.name, status, testcase.errors);
+    testcase = null;
+  };
+  for (const match of xml.matchAll(XML_TAG_RE)) {
+    const [, closing, tag, attributeSource, selfClosing] = match;
+    const end = match.index + match[0].length;
+    if (closing) {
+      if (tag === 'testsuite') suites.pop();
+      else if (tag === 'testcase' && testcase) finish();
+      else if (failure && testcase) {
+        const body = decodeXml(xml.slice(failure.start, match.index)).trim();
+        const message = body || failure.message;
+        if (message) testcase.errors.push(message);
+        else testcase.failed = true;
+        failure = null;
+      }
+      continue;
+    }
+    const attributes = xmlAttributes(attributeSource);
+    if (tag === 'testsuite') {
+      if (!selfClosing) suites.push(attributes.name ?? '');
+    } else if (tag === 'testcase') {
+      const name = [...suites, attributes.classname, attributes.name].filter(Boolean).join(' ');
+      testcase = { name, errors: [], failed: false, skipped: false };
+      if (selfClosing) finish();
+    } else if (testcase && tag === 'skipped') {
+      testcase.skipped = true;
+    } else if (testcase) {
+      if (selfClosing) {
+        if (attributes.message) testcase.errors.push(attributes.message);
+        else testcase.failed = true;
+      } else {
+        failure = { start: end, message: attributes.message ?? '' };
+      }
+    }
+  }
+  return results;
+}
+
+// Result files ending in .xml are JUnit; everything else is Jest/Vitest JSON.
 export function loadResults({ playwright, unit }) {
   const results = new Map();
   let found = false;
@@ -79,7 +147,9 @@ export function loadResults({ playwright, unit }) {
   }
   for (const file of [unit].flat().filter(Boolean)) {
     if (!fs.existsSync(file)) continue;
-    collectVitest(JSON.parse(fs.readFileSync(file, 'utf8')), results);
+    const text = fs.readFileSync(file, 'utf8');
+    if (file.toLowerCase().endsWith('.xml')) collectJunit(text, results);
+    else collectVitest(JSON.parse(text), results);
     found = true;
   }
   return { results, found };
