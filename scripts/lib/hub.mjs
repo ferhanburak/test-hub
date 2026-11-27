@@ -154,3 +154,43 @@ export function loadResults({ playwright, unit }) {
   }
   return { results, found };
 }
+
+// Cards that only run on a real device (Maestro) never run in CI. They are
+// listed apart so they do not look like missing tests.
+const DEVICE_ENVS = new Set(['e2e-device']);
+export const isDeviceCard = (card) => DEVICE_ENVS.has(card.env);
+
+export function buildReport({ project, cards, results }) {
+  const rows = cards.map((card) => {
+    const result = results.get(card.id);
+    return { ...card, ran: Boolean(result), current: result?.status ?? card.status };
+  });
+  const cardIds = new Set(cards.map((card) => card.id));
+  const orphans = [...results.keys()].filter((id) => !cardIds.has(id)).sort();
+  const criticalFailed = rows.filter((row) => row.priority === 'critical' && row.current === 'failed');
+  const device = rows.filter((row) => !row.ran && isDeviceCard(row));
+  const main = rows.filter((row) => !device.includes(row));
+
+  const table = (items, ran) => [
+    '| ID | Title | Priority | Status | Ran |',
+    '| --- | --- | --- | --- | --- |',
+    ...items.map((r) => `| ${r.id} | ${r.title} | ${r.priority} | ${r.current} | ${ran(r)} |`),
+  ];
+  const lines = [`# Test report: ${project}`, '', ...table(main, (r) => (r.ran ? 'yes' : 'no'))];
+  if (device.length) {
+    lines.push(
+      '',
+      '## On device (local)',
+      '',
+      'Maestro flows run on a phone, not in CI. Status is the last result written to the card.',
+      '',
+      ...table(device, () => 'device'),
+    );
+  }
+  const counts = [`Cards: ${rows.length}`, `ran: ${rows.filter((r) => r.ran).length}`];
+  if (device.length) counts.push(`on device (local): ${device.length}`);
+  counts.push(`critical failures: ${criticalFailed.length}`);
+  lines.push('', counts.join(' · '));
+  if (orphans.length) lines.push('', `Tests without a card: ${orphans.join(', ')}`);
+  return { rows, orphans, criticalFailed, summary: `${lines.join('\n')}\n` };
+}
