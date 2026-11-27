@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { collectJunit, loadResults, readCards } from '../../scripts/lib/hub.mjs';
+import { buildReport, collectJunit, isDeviceCard, loadResults, readCards } from '../../scripts/lib/hub.mjs';
 
 let dir;
 const vitestReport = (title, status) => ({ testResults: [{ assertionResults: [{ title, status, failureMessages: status === 'failed' ? ['boom'] : [] }] }] });
@@ -117,5 +117,61 @@ describe('JUnit results (node --test)', () => {
     fs.writeFileSync(xml, '<testsuites><testcase name="SND-WEB-001 ok"/></testsuites>');
     const { results } = loadResults({ unit: [xml, path.join(dir, 'project.json')] });
     expect(results.get('SND-WEB-001')).toEqual({ status: 'failed', errors: ['boom'] });
+  });
+});
+
+describe('buildReport', () => {
+  const card = (id, env, extra = {}) => ({ id, title: `Test ${id}`, priority: 'medium', env, status: 'passed', ...extra });
+  const cards = [card('TRK-MOB-001', 'unit'), card('TRK-MOB-002', 'unit'), card('TRK-MOB-038', 'e2e-device')];
+
+  test('lists device cards that did not run apart from the others', () => {
+    const results = new Map([['TRK-MOB-001', { status: 'passed', errors: [] }]]);
+    const { summary } = buildReport({ project: 'tracksnap', cards, results });
+    const [main, device] = summary.split('## On device (local)');
+
+    expect(main).toContain('| TRK-MOB-001 | Test TRK-MOB-001 | medium | passed | yes |');
+    expect(main).toContain('| TRK-MOB-002 | Test TRK-MOB-002 | medium | passed | no |');
+    expect(main).not.toContain('TRK-MOB-038');
+    expect(device).toContain('| TRK-MOB-038 | Test TRK-MOB-038 | medium | passed | device |');
+    expect(summary).toContain('Cards: 3 · ran: 1 · on device (local): 1 · critical failures: 0');
+  });
+
+  test('keeps a device card in the main table when it has a result', () => {
+    const results = new Map([['TRK-MOB-038', { status: 'failed', errors: ['boom'] }]]);
+    const { summary } = buildReport({ project: 'tracksnap', cards, results });
+
+    expect(summary).not.toContain('On device');
+    expect(summary).toContain('| TRK-MOB-038 | Test TRK-MOB-038 | medium | failed | yes |');
+    expect(summary).toContain('Cards: 3 · ran: 1 · critical failures: 0');
+  });
+
+  test('keeps the old layout for projects without device cards', () => {
+    const results = new Map([['CLT-WEB-001', { status: 'failed', errors: [] }], ['CLT-WEB-009', { status: 'passed', errors: [] }]]);
+    const report = buildReport({
+      project: 'celtikci',
+      cards: [card('CLT-WEB-001', 'local', { priority: 'critical' })],
+      results,
+    });
+
+    expect(report.summary).toBe(
+      [
+        '# Test report: celtikci',
+        '',
+        '| ID | Title | Priority | Status | Ran |',
+        '| --- | --- | --- | --- | --- |',
+        '| CLT-WEB-001 | Test CLT-WEB-001 | critical | failed | yes |',
+        '',
+        'Cards: 1 · ran: 1 · critical failures: 1',
+        '',
+        'Tests without a card: CLT-WEB-009',
+        '',
+      ].join('\n'),
+    );
+    expect(report.criticalFailed.map((row) => row.id)).toEqual(['CLT-WEB-001']);
+  });
+
+  test('recognises device cards by env', () => {
+    expect(isDeviceCard({ env: 'e2e-device' })).toBe(true);
+    expect(isDeviceCard({ env: 'unit' })).toBe(false);
   });
 });

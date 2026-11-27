@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadResults, readCards } from './lib/hub.mjs';
+import { buildReport, loadResults, readCards } from './lib/hub.mjs';
 
 const { values: args } = parseArgs({
   options: {
@@ -24,25 +24,7 @@ if (!found) {
   process.exit(2);
 }
 
-const rows = cards.map((card) => {
-  const result = results.get(card.id);
-  return { ...card, ran: Boolean(result), current: result?.status ?? card.status };
-});
-const cardIds = new Set(cards.map((card) => card.id));
-const orphans = [...results.keys()].filter((id) => !cardIds.has(id)).sort();
-const criticalFailed = rows.filter((row) => row.priority === 'critical' && row.current === 'failed');
-
-const lines = [
-  `# Test report: ${args.project}`,
-  '',
-  '| ID | Title | Priority | Status | Ran |',
-  '| --- | --- | --- | --- | --- |',
-  ...rows.map((r) => `| ${r.id} | ${r.title} | ${r.priority} | ${r.current} | ${r.ran ? 'yes' : 'no'} |`),
-  '',
-  `Cards: ${rows.length} · ran: ${rows.filter((r) => r.ran).length} · critical failures: ${criticalFailed.length}`,
-];
-if (orphans.length) lines.push('', `Tests without a card: ${orphans.join(', ')}`);
-const summary = `${lines.join('\n')}\n`;
+const { rows, orphans, criticalFailed, summary } = buildReport({ project: args.project, cards, results });
 
 fs.mkdirSync(path.dirname(args.out), { recursive: true });
 fs.writeFileSync(args.out, summary);
