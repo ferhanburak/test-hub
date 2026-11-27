@@ -31,8 +31,8 @@ function fakeApi() {
 }
 
 const results = (status, errors = ['boom']) => new Map([[CARD.id, { status, errors }]]);
-const sync = (api, map, runUrl = RUN_1) =>
-  syncIssues({ api, cards: [CARD], results: map, project: 'celtikci', runUrl });
+const sync = (api, map, runUrl = RUN_1, options = {}) =>
+  syncIssues({ api, cards: [CARD], results: map, project: 'celtikci', runUrl, ...options });
 
 describe('issue sync', () => {
   let api;
@@ -102,6 +102,40 @@ describe('issue sync', () => {
     expect(api.issues[0].comments).toHaveLength(0);
   });
 
+  test('assigns the owner to a failed critical test', async () => {
+    await sync(api, results('failed'), RUN_1, { assignee: 'owner' });
+
+    expect(api.issues[0].assignees).toEqual(['owner']);
+  });
+
+  test('does not assign flaky or non-critical tests', async () => {
+    await sync(api, results('flaky'), RUN_1, { assignee: 'owner' });
+    await syncIssues({
+      api,
+      cards: [{ ...CARD, id: 'CLT-WEB-002', priority: 'high' }],
+      results: new Map([['CLT-WEB-002', { status: 'failed', errors: ['boom'] }]]),
+      project: 'celtikci',
+      runUrl: RUN_1,
+      assignee: 'owner',
+    });
+
+    expect(api.issues).toHaveLength(2);
+    expect(api.issues.every((issue) => !issue.assignees)).toBe(true);
+  });
+
+  test('opens the issue unassigned when the owner cannot be assigned', async () => {
+    const create = api.createIssue;
+    api.createIssue = async (issue) => {
+      if (issue.assignees) throw Object.assign(new Error('GitHub API POST /issues failed: 422'), { status: 422 });
+      return create(issue);
+    };
+    const summary = await sync(api, results('failed'), RUN_1, { assignee: 'some-org' });
+
+    expect(summary.opened).toEqual([CARD.id]);
+    expect(api.issues).toHaveLength(1);
+    expect(api.issues[0].assignees).toBeUndefined();
+  });
+
   test('does nothing for a passing test without an issue', async () => {
     await sync(api, results('passed', []));
 
@@ -146,6 +180,13 @@ describe('GitHub API client', () => {
     const issues = await api.listOpenIssues('test-hub');
 
     expect(issues.map((issue) => issue.number)).toEqual([1, 3]);
+  });
+
+  test('exposes the status code on failed requests', async () => {
+    const fetchImpl = async () => ({ ok: false, status: 422 });
+    const api = createGitHubApi({ repo: 'o/r', token: 't', baseUrl: 'https://api.test', fetchImpl });
+
+    await expect(api.createIssue({ title: 'x' })).rejects.toMatchObject({ status: 422 });
   });
 
   test('treats an existing label as success', async () => {
