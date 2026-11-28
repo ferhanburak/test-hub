@@ -1,8 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PROJECTS } from './projects.js';
-import { addNote, createClient, loadProject, releaseReadiness } from './lib/data.js';
+import {
+  addNote,
+  createClient,
+  listRepos,
+  loadProject,
+  projectFromRepo,
+  releaseReadiness,
+  startAnalysis,
+} from './lib/data.js';
 
 const TOKEN_KEY = 'test-hub-token';
+const EXTRAS_KEY = 'test-hub-projects';
+
+// Projects added from Settings, kept in this browser only.
+function readExtras() {
+  try {
+    const list = JSON.parse(localStorage.getItem(EXTRAS_KEY) ?? '[]');
+    return Array.isArray(list) ? list.filter((item) => item?.key && item?.repo && item?.catalog) : [];
+  } catch {
+    return [];
+  }
+}
 
 const STATUS = {
   passed: { label: 'geçti', tone: 'ok' },
@@ -60,14 +79,16 @@ function useRoute() {
 export default function App() {
   const route = useRoute();
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) ?? '');
+  const [extras, setExtras] = useState(readExtras);
   const [state, setState] = useState({});
   const [loadedAt, setLoadedAt] = useState(null);
+  const projects = useMemo(() => [...PROJECTS, ...extras], [extras]);
 
   const refresh = useCallback(async () => {
     const client = createClient({ token: token || undefined });
-    setState(Object.fromEntries(PROJECTS.map((project) => [project.key, { loading: true }])));
+    setState(Object.fromEntries(projects.map((project) => [project.key, { loading: true }])));
     await Promise.all(
-      PROJECTS.map(async (project) => {
+      projects.map(async (project) => {
         try {
           const data = await loadProject(client, project);
           setState((current) => ({ ...current, [project.key]: { data } }));
@@ -77,7 +98,7 @@ export default function App() {
       }),
     );
     setLoadedAt(new Date().toISOString());
-  }, [token]);
+  }, [token, projects]);
 
   useEffect(() => {
     refresh();
@@ -89,14 +110,20 @@ export default function App() {
     setToken(value);
     window.location.hash = '#/';
   };
+  const saveExtras = (next) => {
+    localStorage.setItem(EXTRAS_KEY, JSON.stringify(next));
+    setExtras(next);
+  };
 
   const [page, key] = route.split('/');
+  const selected = projects.find((project) => project.key === key);
   let body;
-  if (page === 'ayarlar') body = <Settings token={token} onSave={saveToken} />;
-  else if (page === 'release') body = <Release state={state} />;
-  else if (page === 'p' && PROJECTS.some((project) => project.key === key)) {
-    body = <ProjectDetail project={PROJECTS.find((project) => project.key === key)} entry={state[key]} token={token} />;
-  } else body = <Overview state={state} hasToken={Boolean(token)} />;
+  if (page === 'ayarlar') {
+    body = <Settings token={token} onSave={saveToken} projects={projects} extras={extras} onExtras={saveExtras} />;
+  } else if (page === 'release') body = <Release state={state} projects={projects} />;
+  else if (page === 'p' && selected) {
+    body = <ProjectDetail project={selected} entry={state[key]} token={token} onRefresh={refresh} />;
+  } else body = <Overview state={state} hasToken={Boolean(token)} projects={projects} />;
 
   return (
     <div className="app">
@@ -138,8 +165,8 @@ function StatusBar({ counts, total }) {
   );
 }
 
-function Overview({ state, hasToken }) {
-  const needsToken = PROJECTS.some((project) => state[project.key]?.data?.needsToken);
+function Overview({ state, hasToken, projects }) {
+  const needsToken = projects.some((project) => state[project.key]?.data?.needsToken);
   return (
     <>
       {needsToken && !hasToken && (
@@ -148,7 +175,7 @@ function Overview({ state, hasToken }) {
         </p>
       )}
       <div className="grid">
-        {PROJECTS.map((project) => (
+        {projects.map((project) => (
           <ProjectCard key={project.key} project={project} entry={state[project.key]} />
         ))}
       </div>
@@ -238,7 +265,7 @@ function ReadinessList({ readiness }) {
   );
 }
 
-function Release({ state }) {
+function Release({ state, projects }) {
   return (
     <>
       <a className="back" href="#/">
@@ -250,7 +277,7 @@ function Release({ state }) {
         koşuları uyarıdır.
       </p>
       <div className="stack">
-        {PROJECTS.map((project) => {
+        {projects.map((project) => {
           const entry = state[project.key];
           const data = entry?.data;
           if (!entry || entry.loading || entry.error || !data?.rows) {
@@ -331,7 +358,97 @@ function NoteForm({ repo, issue, token }) {
   );
 }
 
-function ProjectDetail({ project, entry, token }) {
+const DOC_LABELS = {
+  'TEST-REPORT.md': 'Test raporu',
+  'functions.md': 'Fonksiyonlar ve beklenen durumlar',
+  'SRS.md': 'SRS (gereksinimler)',
+  'SDD.md': 'SDD (tasarım)',
+  'README.md': 'Devir paketi',
+};
+
+function AnalysisSection({ project, data, token, onRefresh }) {
+  const [focus, setFocus] = useState('');
+  const [maxCards, setMaxCards] = useState(25);
+  const [status, setStatus] = useState({});
+  const { analysis } = data;
+  if (!analysis) return null;
+  const run = analysis.lastRun;
+  const runTone = !run ? 'muted' : run.status !== 'completed' ? 'info' : run.conclusion === 'success' ? 'ok' : 'bad';
+  const runLabel = !run ? 'Henüz koşmadı' : run.status !== 'completed' ? 'Sürüyor' : run.conclusion === 'success' ? 'Tamamlandı' : 'Başarısız';
+
+  const start = async (event) => {
+    event.preventDefault();
+    setStatus({ busy: true });
+    try {
+      await startAnalysis(createClient({ token }), data.project, { focus, maxCards });
+      setStatus({ started: true });
+      setTimeout(onRefresh, 5000);
+    } catch (error) {
+      setStatus({ error: error.message });
+    }
+  };
+
+  return (
+    <section>
+      <div className="row-between">
+        <h3>Analiz ve belgeler</h3>
+        {analysis.enabled && <Badge tone={runTone}>{runLabel}</Badge>}
+      </div>
+      {analysis.docs.length ? (
+        <ul className="doc-links">
+          {analysis.docs.map((doc) => (
+            <li key={doc.name}>
+              <a href={doc.url} target="_blank" rel="noreferrer">
+                {DOC_LABELS[doc.name] ?? doc.name}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted small">Ana dalda henüz analiz belgesi yok (docs/analysis).</p>
+      )}
+      {run && (
+        <p className="muted small">
+          Son analiz: <a href={run.html_url} target="_blank" rel="noreferrer">{ago(run.created_at)}</a>. Sonuç pull request olarak gelir.
+        </p>
+      )}
+      {!analysis.enabled ? (
+        <p className="small">
+          Bu projede <code>test-hub-analyze.yml</code> yok.{' '}
+          <a href="https://github.com/ferhanburak/test-hub#analizi-github-actionsta-çalıştırma" target="_blank" rel="noreferrer">
+            Kurulum adımları
+          </a>
+        </p>
+      ) : !token ? (
+        <p className="muted small">Analizi başlatmak için Ayarlar'dan token ekle.</p>
+      ) : (
+        <form className="analyze-form" onSubmit={start}>
+          <label htmlFor="focus">Önce bakılacak alan (isteğe bağlı)</label>
+          <input id="focus" value={focus} maxLength={160} onChange={(event) => setFocus(event.target.value)} placeholder="ör. giriş ve ödeme" />
+          <label htmlFor="max-cards">En fazla yeni kart</label>
+          <input id="max-cards" type="number" min="1" max="50" value={maxCards} onChange={(event) => setMaxCards(event.target.value)} />
+          {status.error && <p className="error small">{status.error}</p>}
+          {status.started && (
+            <p className="small">
+              Başlatıldı. Claude testleri ve belgeleri hazırlayınca{' '}
+              <a href={`${data.project.url}/pulls`} target="_blank" rel="noreferrer">
+                pull request
+              </a>{' '}
+              açılacak.
+            </p>
+          )}
+          <div className="row">
+            <button type="submit" disabled={status.busy || run?.status === 'in_progress' || run?.status === 'queued'}>
+              {status.busy ? 'Başlatılıyor…' : 'Analiz ve test üret'}
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function ProjectDetail({ project, entry, token, onRefresh }) {
   const [filter, setFilter] = useState('all');
   const data = entry?.data;
   const rows = useMemo(() => {
@@ -373,6 +490,8 @@ function ProjectDetail({ project, entry, token }) {
           Açık sorunlar ({data.openIssues})
         </a>
       </p>
+
+      <AnalysisSection project={project} data={data} token={token} onRefresh={onRefresh} />
 
       <section>
         <div className="row-between">
@@ -463,7 +582,76 @@ function ProjectDetail({ project, entry, token }) {
   );
 }
 
-function Settings({ token, onSave }) {
+function ProjectSettings({ token, projects, extras, onExtras }) {
+  const [repos, setRepos] = useState(null);
+  const [choice, setChoice] = useState('');
+  const [error, setError] = useState('');
+  const known = new Set(projects.map((project) => project.repo.toLowerCase()));
+
+  const load = async () => {
+    setError('');
+    try {
+      const list = await listRepos(createClient({ token }));
+      setRepos(list.filter((repo) => !known.has(repo.fullName.toLowerCase())));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  const add = () => {
+    if (!choice) return;
+    onExtras([...extras, projectFromRepo(choice, projects.map((project) => project.key))]);
+    setChoice('');
+    setRepos((current) => current?.filter((repo) => repo.fullName !== choice) ?? null);
+  };
+
+  return (
+    <>
+      <h3>Projeler</h3>
+      <p>
+        Panel, sabit altı projeye ek olarak seçtiğin repoları da gösterir. Eklenen repoda kartlar{' '}
+        <code>tests/catalog/</code> klasöründen okunur. Testleri ve belgeleri Claude'a hazırlatmak için repoya{' '}
+        <code>test-hub-analyze.yml</code> eklenmelidir.
+      </p>
+      {extras.length > 0 && (
+        <ul className="doc-links">
+          {extras.map((project) => (
+            <li key={project.key} className="row-between">
+              <span>{project.repo}</span>
+              <button type="button" className="link-button" onClick={() => onExtras(extras.filter((item) => item.key !== project.key))}>
+                Kaldır
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!token ? (
+        <p className="muted small">Repo eklemek için önce token'ı kaydet.</p>
+      ) : repos === null ? (
+        <button type="button" onClick={load}>
+          Repolarımı listele
+        </button>
+      ) : (
+        <div className="row">
+          <select aria-label="Repo" value={choice} onChange={(event) => setChoice(event.target.value)}>
+            <option value="">Repo seç…</option>
+            {repos.map((repo) => (
+              <option key={repo.fullName} value={repo.fullName}>
+                {repo.fullName}
+                {repo.private ? ' (private)' : ''}
+              </option>
+            ))}
+          </select>
+          <button type="button" onClick={add} disabled={!choice}>
+            Ekle
+          </button>
+        </div>
+      )}
+      {error && <p className="error small">{error}</p>}
+    </>
+  );
+}
+
+function Settings({ token, onSave, projects, extras, onExtras }) {
   const [value, setValue] = useState(token);
   return (
     <section className="settings">
@@ -484,10 +672,15 @@ function Settings({ token, onSave }) {
           <strong>Metadata</strong> için yalnızca <em>Read-only</em>.
         </li>
       </ol>
-      <p>
-        Panelden kalan testlere not düşmek istersen (not, Issue'ya yorum olarak eklenir) <strong>Issues</strong> iznini{' '}
-        <em>Read and write</em> yap. Gerekmiyorsa salt okunur bırak.
-      </p>
+      <p>İsteğe bağlı yazma izinleri:</p>
+      <ul>
+        <li>
+          Kalan testlere not düşmek için (not, Issue'ya yorum olarak eklenir) <strong>Issues</strong>: <em>Read and write</em>.
+        </li>
+        <li>
+          Panelden "Analiz ve test üret" ile Claude'u başlatmak için <strong>Actions</strong>: <em>Read and write</em>.
+        </li>
+      </ul>
       <p className="muted small">Token yalnızca bu tarayıcıda saklanır ve sadece api.github.com'a gönderilir.</p>
       <form
         onSubmit={(event) => {
@@ -514,6 +707,7 @@ function Settings({ token, onSave }) {
           )}
         </div>
       </form>
+      <ProjectSettings token={token} projects={projects} extras={extras} onExtras={onExtras} />
     </section>
   );
 }
