@@ -78,6 +78,31 @@ Yerel sonuçlardan tek parça rapor üretmek için:
 node scripts/report.mjs --project mulakat-kocu --catalog ../mulakat-kocu/tests/catalog --unit ../mulakat-kocu/test-results/test-hub-unit.json --doc ../mulakat-kocu/docs/analysis/TEST-REPORT.md
 ```
 
+## Analizi GitHub Actions'ta çalıştırma
+
+`/analyze` komutunun yaptığı işi Claude, GitHub Actions'ta da yapabilir. Sonuç bir pull request olarak gelir: testler, kartlar, `TEST-REPORT.md`, `SRS.md`, `SDD.md` ve `functions.md`. Uygulama kodu commit edilmez; PR'a yalnızca test, kart ve belge dosyaları girer.
+
+Bir projede açmak için:
+
+1. `templates/analyze-project.yml` dosyasını projenin `.github/workflows/test-hub-analyze.yml` yoluna kopyala. İçindeki `project`, `id-prefix` ve `working-directory` değerlerini düzenle.
+2. `claude setup-token` çalıştır, çıkan değeri projede `CLAUDE_CODE_OAUTH_TOKEN` secret'ı olarak ekle:
+
+```powershell
+gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <sahip>/<repo>
+```
+
+3. Projede şu ayarı aç: Settings → Actions → General → Workflow permissions → **Allow GitHub Actions to create and approve pull requests**.
+4. Actions sekmesinde **test-hub-analyze → Run workflow** ile başlat. İstersen başlamak için bir alan (`focus`) ve en fazla kart sayısı (`max-cards`) verebilirsin.
+
+Ücret ve erişim:
+
+- Kullanım Claude aboneliğinin limitinden düşer, ayrı bir API faturası çıkmaz. Ancak claude.ai'de "ekstra kullanım" açıksa limit aşımı ücretlendirilebilir.
+- Private repolarda GitHub Actions dakikası harcanır.
+- Workflow yalnızca elle ya da zamanlayıcıyla başlar. Fork PR'ları secret'a erişemez.
+- Token yalnızca GitHub secret olarak tutulur.
+
+Claude'un açtığı PR, `GITHUB_TOKEN` ile açıldığı için projenin normal test-hub workflow'unu tetiklemez. Testler PR'ı açmadan önce çalıştırılmıştır, sonuçlar `TEST-REPORT.md` içindedir. Merge sonrası ana dalda normal test-hub koşusu çalışır ve kalan testler için `needs-fix` etiketli Issue'lar açar.
+
 ## Zamanlanmış testler
 
 Proje şablonlarında (`templates/*-project-ci.yml`) yorum satırı olarak bir `schedule` bloğu vardır. Açılırsa testler örneğin her pazartesi tam setle çalışır. Private repolarda bu Actions dakikası harcar.
