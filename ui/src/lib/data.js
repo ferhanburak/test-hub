@@ -29,9 +29,23 @@ export function createClient({ token, fetchImpl = (...args) => fetch(...args) } 
     }
     return accept.endsWith('raw') || !url.startsWith(API) ? response.text() : response.json();
   };
+  const send = async (path, body) => {
+    const response = await fetchImpl(`${API}${path}`, {
+      method: 'POST',
+      headers: { ...headers('application/vnd.github+json'), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const reason =
+        response.status === 401 ? 'Token geçersiz' : response.status === 403 || response.status === 404 ? "Token'ın bu repoda yazma izni yok" : `GitHub ${response.status}`;
+      throw new GitHubError(reason, response.status);
+    }
+    return response.json();
+  };
   return {
     authenticated: Boolean(token),
     json: (path) => request(`${API}${path}`),
+    post: send,
     // Raw file text: through the API with a token (private repos), else from raw.githubusercontent.com.
     file: (repo, ref, path) =>
       token
@@ -121,4 +135,57 @@ export async function loadProject(client, project) {
     issues: (issues ?? []).filter((issue) => !issue.pull_request),
     runs: runsPage?.workflow_runs ?? [],
   });
+}
+
+// A note from the panel is a comment on the test's issue; GitHub stays the source.
+export async function addNote(client, repo, issueNumber, text) {
+  const body = text.trim();
+  if (!client.authenticated) throw new GitHubError('Not yazmak için token gerekli', 401);
+  if (!body) throw new GitHubError('Not boş olamaz', 400);
+  return client.post(`/repos/${repo}/issues/${issueNumber}/comments`, { body: `${body}\n\n_test-hub panelinden_` });
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+export const DEVICE_RUN_MAX_DAYS = 7;
+
+// Release readiness from what the panel already knows. Blockers stop a release,
+// warnings need a look. Mirrors the design: a failing critical test stops it.
+export function releaseReadiness(summary, now = new Date()) {
+  const blockers = [];
+  const warnings = [];
+  const passes = [];
+  const rows = summary.rows ?? [];
+  const run = summary.lastRun;
+
+  if (!run) blockers.push('Ana dalda hiç test-hub koşusu yok.');
+  else if (run.conclusion === 'success') passes.push('Son ana dal koşusu başarılı.');
+  else if (run.status !== 'completed') warnings.push('Son koşu hâlâ sürüyor.');
+  else blockers.push(`Son ana dal koşusu başarısız (${run.conclusion}).`);
+
+  const critical = rows.filter((row) => row.priority === 'critical');
+  const criticalFailed = critical.filter((row) => row.status === 'failed');
+  if (criticalFailed.length) blockers.push(`Kalan kritik test: ${criticalFailed.map((row) => row.id).join(', ')}.`);
+  else if (critical.length) passes.push(`${critical.length} kritik testin hiçbiri kalmıyor.`);
+
+  const criticalMissing = critical.filter((row) => row.status === 'not-written');
+  if (criticalMissing.length) warnings.push(`Yazılmamış kritik test: ${criticalMissing.map((row) => row.id).join(', ')}.`);
+
+  const otherFailed = rows.filter((row) => row.priority !== 'critical' && row.status === 'failed');
+  if (otherFailed.length) warnings.push(`Kalan diğer test: ${otherFailed.map((row) => row.id).join(', ')}.`);
+  const flaky = rows.filter((row) => row.status === 'flaky');
+  if (flaky.length) warnings.push(`Kararsız test: ${flaky.map((row) => row.id).join(', ')}.`);
+
+  const device = rows.filter((row) => row.device);
+  if (device.length) {
+    const dates = device.map((row) => (row.last_run ? new Date(`${row.last_run}T00:00:00`) : null));
+    const never = device.filter((_, index) => !dates[index]);
+    const oldest = dates.filter(Boolean).sort((a, b) => a - b)[0];
+    const age = oldest ? Math.floor((now - oldest) / DAY) : null;
+    if (never.length) warnings.push(`Cihazda hiç koşmamış test: ${never.map((row) => row.id).join(', ')}.`);
+    else if (age > DEVICE_RUN_MAX_DAYS) warnings.push(`Cihaz testleri ${age} gün önce koştu; release öncesi telefonda yeniden koştur.`);
+    else passes.push(`Cihaz testleri ${age === 0 ? 'bugün' : `${age} gün önce`} koştu.`);
+  }
+
+  const verdict = blockers.length ? 'blocked' : warnings.length ? 'warnings' : 'ready';
+  return { verdict, blockers, warnings, passes };
 }
