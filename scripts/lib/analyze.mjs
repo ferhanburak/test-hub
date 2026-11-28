@@ -48,10 +48,11 @@ const CONFIG_FILES = [
   '.env.example',
 ];
 
-// Tracked files when the folder is a git repository (ignored files, such as
-// .env, stay out); otherwise a walk that skips build and dependency folders.
+// Only tracked files when the folder is a git repository (untracked and ignored
+// files, such as .env or local tool settings, stay out); otherwise a walk that
+// skips build and dependency folders.
 export function listFiles(root) {
-  const git = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+  const git = spawnSync('git', ['ls-files', '-z'], {
     cwd: root,
     encoding: 'utf8',
   });
