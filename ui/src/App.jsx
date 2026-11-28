@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PROJECTS } from './projects.js';
-import { createClient, loadProject } from './lib/data.js';
+import { addNote, createClient, loadProject, releaseReadiness } from './lib/data.js';
 
 const TOKEN_KEY = 'test-hub-token';
 
@@ -18,6 +18,11 @@ const HEALTH = {
   warning: { label: 'Açık sorun var', tone: 'warn' },
   failing: { label: 'Kırık', tone: 'bad' },
   unknown: { label: 'Koşu yok', tone: 'muted' },
+};
+const VERDICT = {
+  ready: { label: 'Hazır', tone: 'ok' },
+  warnings: { label: 'Uyarılarla hazır', tone: 'warn' },
+  blocked: { label: 'Hazır değil', tone: 'bad' },
 };
 const PRIORITY = { critical: 'kritik', high: 'yüksek', medium: 'orta', normal: 'normal', low: 'düşük' };
 const statusInfo = (status) => STATUS[status] ?? { label: status || '—', tone: 'muted' };
@@ -88,8 +93,9 @@ export default function App() {
   const [page, key] = route.split('/');
   let body;
   if (page === 'ayarlar') body = <Settings token={token} onSave={saveToken} />;
+  else if (page === 'release') body = <Release state={state} />;
   else if (page === 'p' && PROJECTS.some((project) => project.key === key)) {
-    body = <ProjectDetail project={PROJECTS.find((project) => project.key === key)} entry={state[key]} />;
+    body = <ProjectDetail project={PROJECTS.find((project) => project.key === key)} entry={state[key]} token={token} />;
   } else body = <Overview state={state} hasToken={Boolean(token)} />;
 
   return (
@@ -104,6 +110,9 @@ export default function App() {
           <button type="button" onClick={refresh}>
             Yenile
           </button>
+          <a className="button" href="#/release">
+            Release
+          </a>
           <a className="button" href="#/ayarlar">
             Ayarlar
           </a>
@@ -207,7 +216,122 @@ function ProjectCard({ project, entry }) {
   );
 }
 
-function ProjectDetail({ project, entry }) {
+function ReadinessList({ readiness }) {
+  return (
+    <ul className="checks">
+      {readiness.blockers.map((text) => (
+        <li key={text} className="tone-bad">
+          <span aria-hidden="true">✗</span> {text}
+        </li>
+      ))}
+      {readiness.warnings.map((text) => (
+        <li key={text} className="tone-warn">
+          <span aria-hidden="true">!</span> {text}
+        </li>
+      ))}
+      {readiness.passes.map((text) => (
+        <li key={text} className="tone-ok">
+          <span aria-hidden="true">✓</span> {text}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Release({ state }) {
+  return (
+    <>
+      <a className="back" href="#/">
+        ← Projeler
+      </a>
+      <h1>Release hazırlığı</h1>
+      <p className="muted small">
+        Kalan kritik test ya da başarısız son koşu release'i durdurur. Diğer kırıklar, kararsız testler ve eski cihaz
+        koşuları uyarıdır.
+      </p>
+      <div className="stack">
+        {PROJECTS.map((project) => {
+          const entry = state[project.key];
+          const data = entry?.data;
+          if (!entry || entry.loading || entry.error || !data?.rows) {
+            const note = !entry || entry.loading
+              ? 'Yükleniyor…'
+              : entry.error
+                ? entry.error
+                : data.notConnected
+                  ? "Henüz test-hub'a bağlı değil."
+                  : 'Token gerekli.';
+            return (
+              <div key={project.key} className="card">
+                <h2>{project.name}</h2>
+                <p className={entry?.error ? 'error' : 'muted'}>{note}</p>
+              </div>
+            );
+          }
+          const readiness = releaseReadiness(data);
+          return (
+            <div key={project.key} className="card">
+              <div className="row-between">
+                <a href={`#/p/${project.key}`}>
+                  <h2>{project.name}</h2>
+                </a>
+                <Badge tone={VERDICT[readiness.verdict].tone}>{VERDICT[readiness.verdict].label}</Badge>
+              </div>
+              <ReadinessList readiness={readiness} />
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function NoteForm({ repo, issue, token }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [status, setStatus] = useState({});
+  if (!open) {
+    return (
+      <button type="button" className="link-button" onClick={() => setOpen(true)}>
+        {status.sent ? 'Not eklendi · yeni not' : 'Not ekle'}
+      </button>
+    );
+  }
+  const submit = async (event) => {
+    event.preventDefault();
+    setStatus({ busy: true });
+    try {
+      await addNote(createClient({ token }), repo, issue.number, text);
+      setText('');
+      setOpen(false);
+      setStatus({ sent: true });
+    } catch (error) {
+      setStatus({ error: error.message });
+    }
+  };
+  return (
+    <form className="note" onSubmit={submit}>
+      <textarea
+        aria-label={`Sorun #${issue.number} için not`}
+        rows={3}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder="Issue'ya yorum olarak eklenir"
+      />
+      {status.error && <p className="error small">{status.error}</p>}
+      <div className="row">
+        <button type="submit" disabled={status.busy || !text.trim()}>
+          {status.busy ? 'Gönderiliyor…' : 'Gönder'}
+        </button>
+        <button type="button" className="link-button" onClick={() => setOpen(false)}>
+          Vazgeç
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ProjectDetail({ project, entry, token }) {
   const [filter, setFilter] = useState('all');
   const data = entry?.data;
   const rows = useMemo(() => {
@@ -222,6 +346,7 @@ function ProjectDetail({ project, entry }) {
   if (!data.rows) return <p className="muted">Bu proje için veri yok.</p>;
 
   const health = HEALTH[data.health];
+  const readiness = releaseReadiness(data);
   const filters = [
     ['all', `Tümü (${data.rows.length})`],
     ...STATUS_ORDER.filter((status) => data.counts[status]).map((status) => [status, `${statusInfo(status).label} (${data.counts[status]})`]),
@@ -248,6 +373,14 @@ function ProjectDetail({ project, entry }) {
           Açık sorunlar ({data.openIssues})
         </a>
       </p>
+
+      <section>
+        <div className="row-between">
+          <h3>Release hazırlığı</h3>
+          <Badge tone={VERDICT[readiness.verdict].tone}>{VERDICT[readiness.verdict].label}</Badge>
+        </div>
+        <ReadinessList readiness={readiness} />
+      </section>
 
       <section>
         <h3>Son koşular</h3>
@@ -308,9 +441,12 @@ function ProjectDetail({ project, entry }) {
                   </td>
                   <td className="small">
                     {row.issue && (
-                      <a href={row.issue.html_url} target="_blank" rel="noreferrer">
-                        Sorun #{row.issue.number}
-                      </a>
+                      <>
+                        <a href={row.issue.html_url} target="_blank" rel="noreferrer">
+                          Sorun #{row.issue.number}
+                        </a>
+                        {token && <NoteForm repo={project.repo} issue={row.issue} token={token} />}
+                      </>
                     )}
                     {row.device && <span className="muted">cihazda · {row.last_run || 'hiç koşmadı'}</span>}
                   </td>
@@ -348,6 +484,10 @@ function Settings({ token, onSave }) {
           <strong>Metadata</strong> için yalnızca <em>Read-only</em>.
         </li>
       </ol>
+      <p>
+        Panelden kalan testlere not düşmek istersen (not, Issue'ya yorum olarak eklenir) <strong>Issues</strong> iznini{' '}
+        <em>Read and write</em> yap. Gerekmiyorsa salt okunur bırak.
+      </p>
       <p className="muted small">Token yalnızca bu tarayıcıda saklanır ve sadece api.github.com'a gönderilir.</p>
       <form
         onSubmit={(event) => {

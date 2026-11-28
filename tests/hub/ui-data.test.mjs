@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { createClient, loadProject, parseCard, summarize } from '../../ui/src/lib/data.js';
+import { addNote, createClient, loadProject, parseCard, releaseReadiness, summarize } from '../../ui/src/lib/data.js';
 
 const card = (id, extra = {}) => ({ id, title: `T ${id}`, priority: 'normal', status: 'passed', ...extra });
 const issue = (id, labels = []) => ({ number: 1, body: `<!-- test-hub:${id} -->\n## ${id}`, labels: labels.map((name) => ({ name })) });
@@ -137,5 +137,80 @@ describe('loadProject', () => {
   test('skips projects that are not connected yet', async () => {
     const summary = await loadProject(createClient({ fetchImpl: fakeFetch({}) }), { key: 'x', connected: false });
     expect(summary.notConnected).toBe(true);
+  });
+});
+
+describe('releaseReadiness', () => {
+  const now = new Date('2026-11-28T12:00:00');
+  const row = (id, extra = {}) => ({ id, priority: 'normal', status: 'passed', device: false, ...extra });
+  const ok = { event: 'push', status: 'completed', conclusion: 'success' };
+
+  test('is ready when the last run passed and nothing fails', () => {
+    const result = releaseReadiness(
+      { lastRun: ok, rows: [row('A', { priority: 'critical' }), row('B', { device: true, last_run: '2026-11-27' })] },
+      now,
+    );
+    expect(result.verdict).toBe('ready');
+    expect(result.blockers).toEqual([]);
+    expect(result.passes).toContain('Cihaz testleri 1 gün önce koştu.');
+  });
+
+  test('blocks on a failed critical test or a failed last run', () => {
+    const failedCritical = releaseReadiness({ lastRun: ok, rows: [row('A', { priority: 'critical', status: 'failed' })] }, now);
+    expect(failedCritical.verdict).toBe('blocked');
+    expect(failedCritical.blockers).toEqual(['Kalan kritik test: A.']);
+
+    const failedRun = releaseReadiness({ lastRun: { ...ok, conclusion: 'failure' }, rows: [] }, now);
+    expect(failedRun.blockers).toEqual(['Son ana dal koşusu başarısız (failure).']);
+    expect(releaseReadiness({ lastRun: null, rows: [] }, now).verdict).toBe('blocked');
+  });
+
+  test('warns on other failures, flaky, unwritten critical and stale device runs', () => {
+    const result = releaseReadiness(
+      {
+        lastRun: ok,
+        rows: [
+          row('A', { status: 'failed' }),
+          row('B', { status: 'flaky' }),
+          row('C', { priority: 'critical', status: 'not-written' }),
+          row('D', { device: true, last_run: '2026-11-01' }),
+        ],
+      },
+      now,
+    );
+    expect(result.verdict).toBe('warnings');
+    expect(result.warnings).toEqual([
+      'Yazılmamış kritik test: C.',
+      'Kalan diğer test: A.',
+      'Kararsız test: B.',
+      'Cihaz testleri 27 gün önce koştu; release öncesi telefonda yeniden koştur.',
+    ]);
+  });
+
+  test('warns when a device card never ran', () => {
+    const result = releaseReadiness({ lastRun: ok, rows: [row('D', { device: true })] }, now);
+    expect(result.warnings).toEqual(['Cihazda hiç koşmamış test: D.']);
+  });
+});
+
+describe('addNote', () => {
+  test('posts a comment on the issue with a panel footer', async () => {
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url, init });
+      return { ok: true, status: 201, json: async () => ({ id: 1 }) };
+    };
+    await addNote(createClient({ token: 't', fetchImpl }), 'o/r', 7, '  Yarın bakacağım  ');
+
+    expect(calls[0].url).toBe('https://api.github.com/repos/o/r/issues/7/comments');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(calls[0].init.body)).toEqual({ body: 'Yarın bakacağım\n\n_test-hub panelinden_' });
+  });
+
+  test('needs a token and text, and explains missing write access', async () => {
+    const fetchImpl = async () => ({ ok: false, status: 403 });
+    await expect(addNote(createClient({ fetchImpl }), 'o/r', 7, 'x')).rejects.toThrow('token gerekli');
+    await expect(addNote(createClient({ token: 't', fetchImpl }), 'o/r', 7, '  ')).rejects.toThrow('boş olamaz');
+    await expect(addNote(createClient({ token: 't', fetchImpl }), 'o/r', 7, 'x')).rejects.toThrow('yazma izni yok');
   });
 });

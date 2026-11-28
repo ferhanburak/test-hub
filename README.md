@@ -77,6 +77,8 @@ Ekranlar:
 
 - **Genel bakış:** Proje kartları.
 - **Proje detayı:** Son koşular, durum filtreleri, kart tablosu, cihaz kartlarının son koşu tarihi.
+- **Release hazırlığı:** Her proje için "Hazır", "Uyarılarla hazır" ya da "Hazır değil". Kalan kritik test ya da başarısız son koşu release'i durdurur. Diğer kırıklar, kararsız testler, yazılmamış kritik testler ve 7 günden eski cihaz koşuları uyarıdır.
+- **Not düşme:** Kalan bir testin satırında "Not ekle" ile Issue'ya yorum yazılır. Token'da Issues izninin Read and write olması gerekir.
 - **Ayarlar:** GitHub token'ı.
 
 Public projeler token olmadan görünür. Private projeler için salt okunur bir fine-grained token gerekir: Actions, Contents, Issues ve Metadata izinleri Read-only olmalı. Token yalnızca tarayıcıda saklanır ve sadece api.github.com'a gönderilir. Sayfanın kendisinde proje verisi yoktur.
