@@ -44,3 +44,23 @@ Supabase kullanan projeler `supabase: true` verir: workflow, Supabase CLI ile pr
 ## Bildirim
 
 Kritik öncelikli bir test kaldığında açılan Issue repo sahibine atanır. GitHub Mobile, atanan işler için telefona anlık bildirim gönderir; bunun için uygulamada bildirimleri açmak yeterlidir. Diğer öncelikler ve kararsız testler atanmadan açılır. Repo sahibi atanamıyorsa (örneğin bir organizasyon) Issue atamasız açılır.
+
+## Proje analizi (`/analyze`)
+
+test-hub klasöründe açılan bir Claude Code oturumunda:
+
+```
+/analyze ../carfollow
+```
+
+1. `scripts/analyze.mjs` statik analiz yapar ve projenin `docs/analysis/` klasörüne `facts.json` ile `static.md` yazar. İçerik dosyalardan okunan kesin bilgilerdir: paketler ve çatılar, yapılandırma dosyaları, workflow'lar, Firestore koleksiyonları, Supabase tabloları (RLS ve politika sayısıyla), route ve ekranlar, ortam değişkenlerinin adları ve test/kart sayıları. Yalnızca git'te izlenen dosyalar okunur; `.env` dosyaları hiç açılmaz.
+2. Claude bu bilgilerle aynı klasöre devir paketini (`README.md`), Mermaid diyagramlarını (`diagrams.md`) ve taslak test kartlarını (`draft-cards/`) yazar. Hepsi "Otomatik üretildi, kontrol edilmedi" satırıyla başlar.
+3. Hiçbir şey commit edilmez. Taslak kartlar onaylanınca elle `tests/catalog/` klasörüne taşınır.
+
+Proje belgeleri test-hub'a değil, projenin kendi reposuna yazılır; test-hub public bir repodur.
+
+Yalnızca statik kısmı çalıştırmak için:
+
+```powershell
+node scripts/analyze.mjs --target ../carfollow
+```
