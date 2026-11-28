@@ -64,3 +64,31 @@ Yalnızca statik kısmı çalıştırmak için:
 ```powershell
 node scripts/analyze.mjs --target ../carfollow
 ```
+
+## Panel (`ui/`)
+
+Projelerin test durumunu gösteren salt okunur bir React PWA. Veriyi tarayıcıdan doğrudan GitHub'dan okur:
+
+- **Kartlar:** Katalogdan (projenin `tests/catalog/` klasörü ya da test-hub `catalog/<proje>/`) okunur.
+- **Durum:** Açık `test-hub` Issue'su olan kart "kaldı" ya da "kararsız" görünür, diğerleri kartta yazan durumla görünür.
+- **Proje sağlığı:** Ana daldaki son `test-hub.yml` koşusundan gelir.
+
+Ekranlar:
+
+- **Genel bakış:** Proje kartları.
+- **Proje detayı:** Son koşular, durum filtreleri, kart tablosu, cihaz kartlarının son koşu tarihi.
+- **Ayarlar:** GitHub token'ı.
+
+Public projeler token olmadan görünür. Private projeler için salt okunur bir fine-grained token gerekir: Actions, Contents, Issues ve Metadata izinleri Read-only olmalı. Token yalnızca tarayıcıda saklanır ve sadece api.github.com'a gönderilir. Sayfanın kendisinde proje verisi yoktur.
+
+Lokalde çalıştırmak için:
+
+```powershell
+npm --prefix ui ci
+```
+
+```powershell
+npm --prefix ui run dev
+```
+
+Yayın: `ui-pages` workflow'u, ana dala gelen `ui/` değişikliklerinde paneli GitHub Pages'e yükler. Bunun için repoda bir kez Settings → Pages → Source: **GitHub Actions** seçilmelidir.
