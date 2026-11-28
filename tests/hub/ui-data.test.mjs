@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'vitest';
-import { addNote, createClient, loadProject, parseCard, releaseReadiness, summarize } from '../../ui/src/lib/data.js';
+import {
+  addNote,
+  createClient,
+  listRepos,
+  loadProject,
+  parseCard,
+  projectFromRepo,
+  releaseReadiness,
+  startAnalysis,
+  summarize,
+} from '../../ui/src/lib/data.js';
 
 const card = (id, extra = {}) => ({ id, title: `T ${id}`, priority: 'normal', status: 'passed', ...extra });
 const issue = (id, labels = []) => ({ number: 1, body: `<!-- test-hub:${id} -->\n## ${id}`, labels: labels.map((name) => ({ name })) });
@@ -212,5 +222,77 @@ describe('addNote', () => {
     await expect(addNote(createClient({ fetchImpl }), 'o/r', 7, 'x')).rejects.toThrow('token gerekli');
     await expect(addNote(createClient({ token: 't', fetchImpl }), 'o/r', 7, '  ')).rejects.toThrow('boş olamaz');
     await expect(addNote(createClient({ token: 't', fetchImpl }), 'o/r', 7, 'x')).rejects.toThrow('yazma izni yok');
+  });
+});
+
+describe('analysis from the panel', () => {
+  const recorder = (response = { ok: true, status: 204 }) => {
+    const calls = [];
+    const fetchImpl = async (url, init = {}) => {
+      calls.push({ url, init });
+      return typeof response === 'function' ? response(url) : response;
+    };
+    return { calls, fetchImpl };
+  };
+
+  test('starts the analyze workflow on the default branch', async () => {
+    const { calls, fetchImpl } = recorder();
+    await startAnalysis(createClient({ token: 't', fetchImpl }), { repo: 'o/r', defaultBranch: 'master' }, { focus: ' giriş ve ödeme ', maxCards: 80 });
+
+    expect(calls[0].url).toBe('https://api.github.com/repos/o/r/actions/workflows/test-hub-analyze.yml/dispatches');
+    expect(JSON.parse(calls[0].init.body)).toEqual({ ref: 'master', inputs: { focus: 'giriş ve ödeme', 'max-cards': '50' } });
+  });
+
+  test('refuses without a token or with unsafe focus text', async () => {
+    const { fetchImpl } = recorder();
+    await expect(startAnalysis(createClient({ fetchImpl }), { repo: 'o/r' })).rejects.toThrow('token gerekli');
+    await expect(startAnalysis(createClient({ token: 't', fetchImpl }), { repo: 'o/r' }, { focus: 'x $(id)' })).rejects.toThrow('Odak');
+  });
+
+  test('lists the owner repositories', async () => {
+    const { calls, fetchImpl } = recorder({
+      ok: true,
+      status: 200,
+      json: async () => [{ full_name: 'o/a', private: true, pushed_at: '2026-11-28T00:00:00Z' }],
+    });
+    expect(await listRepos(createClient({ token: 't', fetchImpl }))).toEqual([{ fullName: 'o/a', private: true, pushedAt: '2026-11-28T00:00:00Z' }]);
+    expect(calls[0].url).toContain('/user/repos?per_page=100&sort=updated&affiliation=owner');
+    expect(await listRepos(createClient({ fetchImpl }))).toEqual([]);
+  });
+
+  test('builds a project from a repository with a unique key', () => {
+    expect(projectFromRepo('o/My_App', ['my-app'])).toEqual({
+      key: 'my-app-2',
+      name: 'My_App',
+      repo: 'o/My_App',
+      line: '',
+      catalog: { repo: 'o/My_App', path: 'tests/catalog' },
+      added: true,
+    });
+    expect(() => projectFromRepo('not a repo')).toThrow('Invalid repository');
+  });
+
+  test('loadProject reports analysis documents and the analyze workflow', async () => {
+    const routes = {
+      'https://api.github.com/repos/o/r': { default_branch: 'main', private: false, html_url: 'https://github.com/o/r' },
+      'https://api.github.com/repos/o/r/actions/workflows/test-hub-analyze.yml/runs?per_page=5': {
+        workflow_runs: [{ id: 4, status: 'completed', conclusion: 'success' }],
+      },
+      'https://api.github.com/repos/o/r/contents/docs/analysis?ref=main': [
+        { name: 'SRS.md' },
+        { name: 'TEST-REPORT.md' },
+        { name: 'facts.json' },
+      ],
+    };
+    const fetchImpl = async (url) =>
+      routes[url] === undefined ? { ok: false, status: 404 } : { ok: true, status: 200, json: async () => routes[url] };
+    const data = await loadProject(createClient({ fetchImpl }), { key: 'r', repo: 'o/r', catalog: { repo: 'o/r', path: 'tests/catalog' } });
+
+    expect(data.analysis.enabled).toBe(true);
+    expect(data.analysis.lastRun.id).toBe(4);
+    expect(data.analysis.docs).toEqual([
+      { name: 'TEST-REPORT.md', url: 'https://github.com/o/r/blob/main/docs/analysis/TEST-REPORT.md' },
+      { name: 'SRS.md', url: 'https://github.com/o/r/blob/main/docs/analysis/SRS.md' },
+    ]);
   });
 });

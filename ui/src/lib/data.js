@@ -40,7 +40,7 @@ export function createClient({ token, fetchImpl = (...args) => fetch(...args) } 
         response.status === 401 ? 'Token geçersiz' : response.status === 403 || response.status === 404 ? "Token'ın bu repoda yazma izni yok" : `GitHub ${response.status}`;
       throw new GitHubError(reason, response.status);
     }
-    return response.json();
+    return response.status === 204 ? null : response.json();
   };
   return {
     authenticated: Boolean(token),
@@ -113,15 +113,20 @@ export function summarize({ project, cards, issues, runs }) {
   };
 }
 
+export const ANALYZE_WORKFLOW = 'test-hub-analyze.yml';
+export const ANALYSIS_DOCS = ['TEST-REPORT.md', 'functions.md', 'SRS.md', 'SDD.md', 'README.md'];
+
 export async function loadProject(client, project) {
   if (project.connected === false) return { project, notConnected: true };
   const repo = await client.json(`/repos/${project.repo}`);
   if (!repo) return { project, needsToken: !client.authenticated, missing: client.authenticated };
 
-  const [runsPage, issues, catalogRepo] = await Promise.all([
+  const [runsPage, issues, catalogRepo, analyzeRuns, docs] = await Promise.all([
     client.json(`/repos/${project.repo}/actions/workflows/test-hub.yml/runs?per_page=20`),
     client.json(`/repos/${project.repo}/issues?state=open&labels=test-hub&per_page=100`),
     project.catalog.repo === project.repo ? repo : client.json(`/repos/${project.catalog.repo}`),
+    client.json(`/repos/${project.repo}/actions/workflows/${ANALYZE_WORKFLOW}/runs?per_page=5`),
+    client.json(`/repos/${project.repo}/contents/docs/analysis?ref=${encodeURIComponent(repo.default_branch)}`),
   ]);
   const ref = catalogRepo?.default_branch ?? 'main';
   const listing = (await client.json(`/repos/${project.catalog.repo}/contents/${encodePath(project.catalog.path)}?ref=${ref}`)) ?? [];
@@ -129,13 +134,27 @@ export async function loadProject(client, project) {
   const texts = await Promise.all(files.map((entry) => client.file(project.catalog.repo, ref, entry.path)));
   const cards = texts.map((text, index) => text && parseCard(text, files[index].path)).filter(Boolean);
 
-  return summarize({
+  const summary = summarize({
     project: { ...project, defaultBranch: repo.default_branch, private: repo.private, url: repo.html_url },
     cards,
     issues: (issues ?? []).filter((issue) => !issue.pull_request),
     runs: runsPage?.workflow_runs ?? [],
   });
+  const docNames = new Set((Array.isArray(docs) ? docs : []).map((entry) => entry.name));
+  return {
+    ...summary,
+    analysis: {
+      // null: the project has no test-hub-analyze.yml yet.
+      enabled: analyzeRuns !== null,
+      lastRun: analyzeRuns?.workflow_runs?.[0] ?? null,
+      docs: ANALYSIS_DOCS.filter((name) => docNames.has(name)).map((name) => ({
+        name,
+        url: `${repo.html_url}/blob/${repo.default_branch}/docs/analysis/${name}`,
+      })),
+    },
+  };
 }
+
 
 // A note from the panel is a comment on the test's issue; GitHub stays the source.
 export async function addNote(client, repo, issueNumber, text) {
@@ -188,4 +207,33 @@ export function releaseReadiness(summary, now = new Date()) {
 
   const verdict = blockers.length ? 'blocked' : warnings.length ? 'warnings' : 'ready';
   return { verdict, blockers, warnings, passes };
+}
+
+// Starts the project's test-hub-analyze workflow. Needs a token with
+// Actions: Read and write on that repository.
+export async function startAnalysis(client, project, { focus = '', maxCards = 25 } = {}) {
+  if (!client.authenticated) throw new GitHubError('Başlatmak için token gerekli', 401);
+  const cleanFocus = focus.trim().slice(0, 160);
+  if (/[`$"\\<>{}]/.test(cleanFocus)) throw new GitHubError('Odak metninde tırnak, $ ya da parantez olamaz', 400);
+  const cards = Math.max(1, Math.min(50, Number(maxCards) || 25));
+  await client.post(
+    `/repos/${project.repo}/actions/workflows/${ANALYZE_WORKFLOW}/dispatches`,
+    { ref: project.defaultBranch ?? 'main', inputs: { focus: cleanFocus, 'max-cards': String(cards) } },
+  );
+}
+
+// Repositories the token can read, newest first, for adding a project.
+export async function listRepos(client) {
+  if (!client.authenticated) return [];
+  const repos = (await client.json('/user/repos?per_page=100&sort=updated&affiliation=owner')) ?? [];
+  return repos.map((repo) => ({ fullName: repo.full_name, private: repo.private, pushedAt: repo.pushed_at }));
+}
+
+// A project added from the panel: cards in the repository's tests/catalog.
+export function projectFromRepo(fullName, existingKeys = []) {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(fullName)) throw new Error(`Invalid repository: ${fullName}`);
+  const base = fullName.split('/')[1].toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'proje';
+  let key = base;
+  for (let n = 2; existingKeys.includes(key); n += 1) key = `${base}-${n}`;
+  return { key, name: fullName.split('/')[1], repo: fullName, line: '', catalog: { repo: fullName, path: 'tests/catalog' }, added: true };
 }

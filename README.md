@@ -78,6 +78,8 @@ Ekranlar:
 - **Genel bakış:** Proje kartları.
 - **Proje detayı:** Son koşular, durum filtreleri, kart tablosu, cihaz kartlarının son koşu tarihi.
 - **Release hazırlığı:** Her proje için "Hazır", "Uyarılarla hazır" ya da "Hazır değil". Kalan kritik test ya da başarısız son koşu release'i durdurur. Diğer kırıklar, kararsız testler, yazılmamış kritik testler ve 7 günden eski cihaz koşuları uyarıdır.
+- **Analiz ve belgeler:** Proje sayfasında test raporu, fonksiyon envanteri, SRS, SDD ve devir paketi bağlantıları görünür. "Analiz ve test üret" düğmesi projenin `test-hub-analyze.yml` workflow'unu başlatır; sonuç pull request olarak gelir. Bunun için token'da Actions izninin Read and write olması gerekir.
+- **Proje ekleme:** Ayarlar ekranında "Repolarımı listele" ile kendi repolarından birini panele eklersin. Eklenen projeler yalnızca o tarayıcıda saklanır, kartlar `tests/catalog/` klasöründen okunur.
 - **Not düşme:** Kalan bir testin satırında "Not ekle" ile Issue'ya yorum yazılır. Token'da Issues izninin Read and write olması gerekir.
 - **Ayarlar:** GitHub token'ı.
 
