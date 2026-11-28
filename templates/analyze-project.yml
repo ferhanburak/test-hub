@@ -1,0 +1,54 @@
+# Copy to <project>/.github/workflows/test-hub-analyze.yml and set `project`,
+# `id-prefix` and `working-directory`.
+#
+# Claude analyses the project, writes function-level tests with expected
+# behaviour, runs them and opens a pull request with the tests, cards,
+# TEST-REPORT.md, SRS.md and SDD.md. Application code is never committed.
+#
+# One-time setup in the project repository:
+# 1. Secret CLAUDE_CODE_OAUTH_TOKEN: run `claude setup-token` and paste the
+#    value (Settings → Secrets and variables → Actions). Usage counts against
+#    the Claude subscription.
+# 2. Settings → Actions → General → Workflow permissions: tick
+#    "Allow GitHub Actions to create and approve pull requests".
+#
+# Start it from the Actions tab (Run workflow) or from the test-hub panel.
+name: test-hub-analyze
+
+on:
+  workflow_dispatch:
+    inputs:
+      focus:
+        description: Area to start with (optional), e.g. "giriş ve ödeme"
+        required: false
+        default: ''
+      max-cards:
+        description: Most new cards in this run
+        required: false
+        default: '25'
+  # Optional: a monthly run on the 1st at 04:00 UTC. It uses Claude usage and,
+  # on private repositories, Actions minutes.
+  # schedule:
+  #   - cron: '0 4 1 * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-hub-analyze
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: ferhanburak/test-hub/.github/workflows/analyze.yml@main
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      project: mulakat-kocu
+      id-prefix: MLK-MOB
+      working-directory: .
+      focus: ${{ github.event.inputs.focus || '' }}
+      max-cards: ${{ fromJSON(github.event.inputs.max-cards || '25') }}

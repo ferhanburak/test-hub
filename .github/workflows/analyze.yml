@@ -1,0 +1,171 @@
+name: analyze
+
+# Claude analyses the project, writes function-level tests with expected
+# behaviour, runs them, and writes TEST-REPORT.md, SRS.md and SDD.md. The
+# result arrives as a pull request; nothing is pushed to the default branch.
+# Callers trigger it by hand (workflow_dispatch) or on a schedule only.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Project key used in the cards (e.g. mulakat-kocu)
+        required: true
+        type: string
+      id-prefix:
+        description: Card ID prefix for new cards (e.g. MLK-MOB); taken from existing cards when empty
+        required: false
+        type: string
+        default: ''
+      working-directory:
+        description: App folder inside the project repository (package.json lives here)
+        required: false
+        type: string
+        default: .
+      max-cards:
+        description: Most new cards in one run
+        required: false
+        type: number
+        default: 25
+      focus:
+        description: Optional area to start with (e.g. "auth and payments"), at most 160 characters, no quotes or $
+        required: false
+        type: string
+        default: ''
+      node-version:
+        required: false
+        type: string
+        default: '22'
+      hub-ref:
+        description: test-hub ref to run
+        required: false
+        type: string
+        default: main
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: From `claude setup-token`; usage counts against the Claude subscription
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      HUB_PROJECT: ${{ inputs.project }}
+      ID_PREFIX: ${{ inputs.id-prefix }}
+      APP_DIR: ${{ inputs.working-directory }}
+      MAX_CARDS: ${{ inputs.max-cards }}
+      FOCUS: ${{ inputs.focus }}
+    steps:
+      - name: Validate inputs
+        run: |
+          printf '%s' "$HUB_PROJECT" | grep -Eq '^[a-z0-9-]+$' || { echo "Invalid project"; exit 1; }
+          [ -z "$ID_PREFIX" ] || printf '%s' "$ID_PREFIX" | grep -Eq '^[A-Z]{3}-(WEB|MOB)$' || { echo "Invalid id-prefix"; exit 1; }
+          if ! printf '%s' "$APP_DIR" | grep -Eq '^[A-Za-z0-9._/-]+$' || printf '%s' "$APP_DIR" | grep -q '\.\.'; then
+            echo "Invalid working-directory"; exit 1
+          fi
+          printf '%s' "$MAX_CARDS" | grep -Eq '^[0-9]{1,2}$' || { echo "Invalid max-cards"; exit 1; }
+          if [ "${#FOCUS}" -gt 160 ] || printf '%s' "$FOCUS" | grep -q '[`$"\\<>{}]'; then echo "Invalid focus"; exit 1; fi
+
+      - name: Check out project
+        uses: actions/checkout@v4
+        with:
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out test-hub
+        uses: actions/checkout@v4
+        with:
+          repository: ferhanburak/test-hub
+          ref: ${{ inputs.hub-ref }}
+          path: hub
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Install dependencies
+        run: |
+          (cd hub && npm ci)
+          (cd "target/$APP_DIR" && npm ci)
+
+      # Inputs were validated above; they only reach the prompt, never a shell.
+      - name: Analyse and write tests
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          prompt: |
+            Read hub/.claude/commands/analyze.md and follow it from step 1 to step 11.
+
+            This run is in GitHub Actions:
+            - PROJECT is the folder `target`; the app (package.json) is in `target/${{ inputs.working-directory }}`.
+            - HUB is the folder `hub`.
+            - Project key: ${{ inputs.project }}.
+            - ID prefix for new cards: ${{ inputs.id-prefix || 'take it from the existing cards' }}.
+            - Write at most ${{ inputs.max-cards }} new cards.
+            - Start the inventory and tests with: ${{ inputs.focus || 'the riskiest functions' }}.
+            - Nobody can answer questions; decide, and note assumptions in the documents.
+            - Do not commit, push or open pull requests; the workflow does that.
+            - Write the Turkish summary from step 11 to `target/.test-hub-pr.md`; it becomes the pull request description.
+          claude_args: >-
+            --max-turns 250
+            --allowedTools "Read,Write,Edit,MultiEdit,Glob,Grep,TodoWrite,Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(git diff:*),Bash(git log:*),Bash(git rev-parse:*),Bash(git status:*),Bash(git -C:*),Bash(ls:*),Bash(mkdir:*),Bash(cat:*)"
+            --disallowedTools "Bash(git push:*),Bash(git commit:*),Bash(curl:*),Bash(wget:*)"
+
+      - name: Pull request description
+        run: |
+          if [ ! -s target/.test-hub-pr.md ]; then
+            printf '%s\n\n%s\n' 'test-hub analizi tamamlandı.' 'Ayrıntılar: `docs/analysis/TEST-REPORT.md`, `SRS.md`, `SDD.md`, `functions.md`.' > target/.test-hub-pr.md
+          fi
+
+
+      # Only tests, cards and documents are committed; application code is not.
+      - name: Open pull request
+        id: pr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          path: target
+          token: ${{ github.token }}
+          branch: test-hub/analyze
+          delete-branch: true
+          commit-message: Add function-level tests and analysis documents
+          title: 'test-hub: fonksiyon testleri ve analiz belgeleri'
+          body-path: target/.test-hub-pr.md
+          labels: test-hub
+          add-paths: |
+            docs/analysis/**
+            tests/**
+            **/__tests__/**
+            **/__mocks__/**
+            **/test/**
+            **/*.test.*
+            **/*.spec.*
+            **/.maestro/**
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## test-hub analyze"
+            if [ -n "${{ steps.pr.outputs.pull-request-url }}" ]; then echo "Pull request: ${{ steps.pr.outputs.pull-request-url }}"; else echo "No pull request was opened."; fi
+            if [ -f target/docs/analysis/TEST-REPORT.md ]; then sed -n '/^## Özet/,/^## Testler/p' target/docs/analysis/TEST-REPORT.md | sed '$d'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the documents
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-hub-analyze-${{ inputs.project }}-${{ github.run_attempt }}
+          path: target/docs/analysis/
+          if-no-files-found: ignore
+          retention-days: 14
