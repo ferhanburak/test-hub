@@ -3,7 +3,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { buildReport, collectJunit, isDeviceCard, loadResults, readCards } from '../../scripts/lib/hub.mjs';
+import {
+  buildReport,
+  collectJunit,
+  isDeviceCard,
+  loadResults,
+  readCards,
+  recordDeviceRun,
+  setCardFields,
+} from '../../scripts/lib/hub.mjs';
 
 let dir;
 const vitestReport = (title, status) => ({ testResults: [{ assertionResults: [{ title, status, failureMessages: status === 'failed' ? ['boom'] : [] }] }] });
@@ -132,7 +140,8 @@ describe('buildReport', () => {
     expect(main).toContain('| TRK-MOB-001 | Test TRK-MOB-001 | medium | passed | yes |');
     expect(main).toContain('| TRK-MOB-002 | Test TRK-MOB-002 | medium | passed | no |');
     expect(main).not.toContain('TRK-MOB-038');
-    expect(device).toContain('| TRK-MOB-038 | Test TRK-MOB-038 | medium | passed | device |');
+    expect(device).toContain('| ID | Title | Priority | Status | Last run |');
+    expect(device).toContain('| TRK-MOB-038 | Test TRK-MOB-038 | medium | passed | never |');
     expect(summary).toContain('Cards: 3 · ran: 1 · on device (local): 1 · critical failures: 0');
   });
 
@@ -173,5 +182,75 @@ describe('buildReport', () => {
   test('recognises device cards by env', () => {
     expect(isDeviceCard({ env: 'e2e-device' })).toBe(true);
     expect(isDeviceCard({ env: 'unit' })).toBe(false);
+  });
+});
+
+describe('device runs', () => {
+  test('shows the last local run date in the report', () => {
+    const cards = [
+      { id: 'TRK-MOB-038', title: 'Tabs', priority: 'medium', env: 'e2e-device', status: 'failed', last_run: '2026-11-27' },
+    ];
+    const { summary, criticalFailed } = buildReport({ project: 'tracksnap', cards, results: new Map() });
+
+    expect(summary).toContain('| TRK-MOB-038 | Tabs | medium | failed | 2026-11-27 |');
+    expect(criticalFailed).toEqual([]);
+  });
+
+  test('updates status and adds last_run after it, keeping line endings', () => {
+    const text = '---\r\nid: TRK-MOB-038\r\nstatus: passed\r\nenv: e2e-device\r\n---\r\n\r\n## Body\r\n';
+
+    expect(setCardFields(text, { status: 'failed', last_run: '2026-11-28' })).toBe(
+      '---\r\nid: TRK-MOB-038\r\nstatus: failed\r\nlast_run: 2026-11-28\r\nenv: e2e-device\r\n---\r\n\r\n## Body\r\n',
+    );
+  });
+
+  test('replaces an existing last_run', () => {
+    const text = '---\nid: X\nstatus: passed\nlast_run: 2026-11-01\n---\nbody\n';
+
+    expect(setCardFields(text, { status: 'passed', last_run: '2026-11-28' })).toBe(
+      '---\nid: X\nstatus: passed\nlast_run: 2026-11-28\n---\nbody\n',
+    );
+  });
+
+  test('records a Maestro JUnit run in device cards only', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-device-'));
+    try {
+      const write = (id, env) =>
+        fs.writeFileSync(path.join(dir, `${id}.md`), `---\nid: ${id}\ntitle: T\nenv: ${env}\nstatus: passed\n---\n`);
+      write('TRK-MOB-001', 'unit');
+      write('TRK-MOB-038', 'e2e-device');
+      write('TRK-MOB-039', 'e2e-device');
+      const xml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<testsuites>',
+        '  <testsuite name="Test Suite" device="phone" tests="3" failures="1" time="90">',
+        '    <testcase id="TRK-MOB-038-tabs" name="TRK-MOB-038-tabs" classname="TRK-MOB-038-tabs" time="20" status="SUCCESS"/>',
+        '    <testcase id="TRK-MOB-039-deep-links" name="TRK-MOB-039-deep-links" classname="TRK-MOB-039-deep-links" time="30" status="ERROR">',
+        '      <failure>Element not found: Text matching regex: Garaj</failure>',
+        '    </testcase>',
+        '    <testcase id="TRK-MOB-001-x" name="TRK-MOB-001-x" classname="TRK-MOB-001-x" time="1" status="SUCCESS"/>',
+        '  </testsuite>',
+        '</testsuites>',
+      ].join('\n');
+
+      const { updated, ignored } = recordDeviceRun({
+        cards: readCards('tracksnap', dir),
+        results: collectJunit(xml),
+        date: '2026-11-28',
+      });
+
+      expect(updated).toEqual([
+        { id: 'TRK-MOB-038', status: 'passed' },
+        { id: 'TRK-MOB-039', status: 'failed' },
+      ]);
+      expect(ignored).toEqual(['TRK-MOB-001']);
+      expect(readCards('tracksnap', dir).map((card) => [card.id, card.status, card.last_run])).toEqual([
+        ['TRK-MOB-001', 'passed', undefined],
+        ['TRK-MOB-038', 'passed', '2026-11-28'],
+        ['TRK-MOB-039', 'failed', '2026-11-28'],
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
