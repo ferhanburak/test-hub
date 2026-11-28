@@ -193,7 +193,7 @@ jobs:
           if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
           UNIT=(--unit reports/unit.json)
           for file in reports/project/*; do if [ -f "$file" ]; then UNIT+=(--unit "$file"); fi; done
-          node scripts/report.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" "${UNIT[@]}"
+          node scripts/report.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" "${UNIT[@]}" --doc reports/TEST-REPORT.md
 
       - name: Upload test artifacts
         if: always()

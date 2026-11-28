@@ -14,6 +14,10 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+  # Optional: a regular full run, e.g. every Monday 06:00 Turkey time (03:00 UTC).
+  # Uncomment to enable; it uses Actions minutes on private repositories.
+  # schedule:
+  #   - cron: '0 3 * * 1'
 
 permissions:
   contents: read
@@ -28,4 +32,4 @@ jobs:
       project: tracksnap
       working-directory: mobile
       test-script: test:hub
-      suite: ${{ github.event_name == 'workflow_dispatch' && 'full' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'e2e' || 'fast' }}
+      suite: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && 'full' || (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'e2e' || 'fast' }}

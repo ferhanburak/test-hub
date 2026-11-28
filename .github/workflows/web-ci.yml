@@ -118,7 +118,8 @@ jobs:
         working-directory: hub
         run: |
           if [ -d "catalog/$HUB_PROJECT" ]; then CATALOG="catalog/$HUB_PROJECT"; else CATALOG="../target/tests/catalog"; fi
-          node scripts/report.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" --unit reports/unit.json --unit reports/project-unit.json
+          node scripts/report.mjs --project "$HUB_PROJECT" --catalog "$CATALOG" --unit reports/unit.json --unit reports/project-unit.json \
+            --doc reports/TEST-REPORT.md
 
       - name: Upload test artifacts
         if: always()
