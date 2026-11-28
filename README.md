@@ -27,7 +27,15 @@ Yeni bir web projesini bağlamak için `templates/web-project-ci.yml` dosyasın�
 
 ## Mobil projeler
 
-Mobil (Expo) projeler `templates/mobile-project-ci.yml` ile `mobile-ci.yml` workflow'unu çağırır. Uygulamanın Jest testleri projenin kendi reposunda çalışır ve sonucu `test-results/test-hub-unit.json` dosyasına yazar; test-hub bunu projenin `tests/catalog/` kartlarıyla eşler. Kart ID'si testin adında ya da onu saran `describe` bloğunda geçebilir. Maestro uçtan uca akışları şimdilik lokalde çalışır. Bu akışların kartları `env: e2e-device` ile işaretlenir. Raporda "On device (local)" başlığı altında ayrı listelenir ve eksik test gibi görünmez. Durum olarak kartta yazan son yerel sonuç gösterilir.
+Mobil (Expo) projeler `templates/mobile-project-ci.yml` ile `mobile-ci.yml` workflow'unu çağırır. Uygulamanın Jest testleri projenin kendi reposunda çalışır ve sonucu `test-results/test-hub-unit.json` dosyasına yazar; test-hub bunu projenin `tests/catalog/` kartlarıyla eşler. Kart ID'si testin adında ya da onu saran `describe` bloğunda geçebilir. Maestro uçtan uca akışları şimdilik lokalde çalışır. Bu akışların kartları `env: e2e-device` ile işaretlenir. Raporda "On device (local)" başlığı altında ayrı listelenir ve eksik test gibi görünmez. Durum ve tarih, karta yazılan son yerel koşudan gelir.
+
+Cihazda koşudan sonra sonucu kartlara yazmak için test-hub klasöründen:
+
+```powershell
+node scripts/device-results.mjs --catalog <proje>/tests/catalog --junit <proje>/mobile/test-results/test-hub-maestro.xml
+```
+
+Betik yalnızca `env: e2e-device` kartlarının `status` ve `last_run` alanlarını günceller. Tarih, XML içindeki koşu zamanından (`timestamp`) alınır, yoksa dosyanın yazıldığı gündür; `--date YYYY-MM-DD` ile değiştirilebilir. Değişen kartlar projede commit edilir, sonraki CI raporu "Last run" sütununda bu tarihi gösterir. Kalan akış varsa betik 1 ile çıkar.
 
 Uygulama dışındaki testler (ör. backend fonksiyonları, güvenlik kuralları) için `extra-test-script` verilir: workflow bu npm betiğini `extra-working-directory` klasöründe `npm ci` sonrası çalıştırır. Betik sonuçlarını `test-results/test-hub-*.json` (Jest/Vitest) ya da `test-hub-*.xml` (JUnit) olarak yazar. `node --test` için `--test-reporter=junit --test-reporter-destination=test-results/test-hub-<ad>.xml` yeterlidir; iç içe `describe` başlıkları JUnit'te `testsuite` adı olarak gelir, kart ID'si onlarda da geçebilir. Firebase Emulator Suite kullanan projeler `firebase-emulators: true` verir (Java 21 kurulur, emülatör indirmeleri önbelleğe alınır).
 

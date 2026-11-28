@@ -171,20 +171,20 @@ export function buildReport({ project, cards, results }) {
   const device = rows.filter((row) => !row.ran && isDeviceCard(row));
   const main = rows.filter((row) => !device.includes(row));
 
-  const table = (items, ran) => [
-    '| ID | Title | Priority | Status | Ran |',
+  const table = (items, header, cell) => [
+    `| ID | Title | Priority | Status | ${header} |`,
     '| --- | --- | --- | --- | --- |',
-    ...items.map((r) => `| ${r.id} | ${r.title} | ${r.priority} | ${r.current} | ${ran(r)} |`),
+    ...items.map((r) => `| ${r.id} | ${r.title} | ${r.priority} | ${r.current} | ${cell(r)} |`),
   ];
-  const lines = [`# Test report: ${project}`, '', ...table(main, (r) => (r.ran ? 'yes' : 'no'))];
+  const lines = [`# Test report: ${project}`, '', ...table(main, 'Ran', (r) => (r.ran ? 'yes' : 'no'))];
   if (device.length) {
     lines.push(
       '',
       '## On device (local)',
       '',
-      'Maestro flows run on a phone, not in CI. Status is the last result written to the card.',
+      'Maestro flows run on a phone, not in CI. Status and date come from the last local run recorded in the card.',
       '',
-      ...table(device, () => 'device'),
+      ...table(device, 'Last run', (r) => r.last_run || 'never'),
     );
   }
   const counts = [`Cards: ${rows.length}`, `ran: ${rows.filter((r) => r.ran).length}`];
@@ -193,4 +193,39 @@ export function buildReport({ project, cards, results }) {
   lines.push('', counts.join(' · '));
   if (orphans.length) lines.push('', `Tests without a card: ${orphans.join(', ')}`);
   return { rows, orphans, criticalFailed, summary: `${lines.join('\n')}\n` };
+}
+
+// Writes a local device run into the cards: `status` and `last_run` (YYYY-MM-DD)
+// in the frontmatter. Only device cards are touched; the rest run in CI.
+export function setCardFields(text, fields) {
+  const match = text.match(/^---(\r?\n)([\s\S]*?)\r?\n---/);
+  if (!match) throw new Error('Missing frontmatter');
+  const eol = match[1];
+  const lines = match[2].split(/\r?\n/);
+  for (const [key, value] of Object.entries(fields)) {
+    const index = lines.findIndex((line) => line.startsWith(`${key}:`));
+    if (index >= 0) lines[index] = `${key}: ${value}`;
+    else {
+      const status = lines.findIndex((line) => line.startsWith('status:'));
+      lines.splice(status >= 0 ? status + 1 : lines.length, 0, `${key}: ${value}`);
+    }
+  }
+  return `---${eol}${lines.join(eol)}${eol}---${text.slice(match[0].length)}`;
+}
+
+export function recordDeviceRun({ cards, results, date }) {
+  const updated = [];
+  const ignored = [];
+  for (const [id, result] of results) {
+    const card = cards.find((item) => item.id === id);
+    if (!card || !isDeviceCard(card)) {
+      ignored.push(id);
+      continue;
+    }
+    const text = fs.readFileSync(card.file, 'utf8');
+    const next = setCardFields(text, { status: result.status, last_run: date });
+    if (next !== text) fs.writeFileSync(card.file, next);
+    updated.push({ id, status: result.status });
+  }
+  return { updated, ignored: ignored.sort() };
 }
