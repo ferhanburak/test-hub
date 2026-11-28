@@ -27,12 +27,17 @@ if (args.date && !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) {
   process.exit(2);
 }
 
-// The run date is the day the results file was written, in local time.
+// The run date comes from the first `timestamp` in the file (Maestro writes the
+// start time in local time); without one, from the day the file was written.
+const xml = fs.readFileSync(args.junit, 'utf8');
 const written = fs.statSync(args.junit).mtime;
 const pad = (n) => String(n).padStart(2, '0');
-const date = args.date || `${written.getFullYear()}-${pad(written.getMonth() + 1)}-${pad(written.getDate())}`;
+const date =
+  args.date ||
+  xml.match(/\btimestamp="(\d{4}-\d{2}-\d{2})/)?.[1] ||
+  `${written.getFullYear()}-${pad(written.getMonth() + 1)}-${pad(written.getDate())}`;
 
-const results = collectJunit(fs.readFileSync(args.junit, 'utf8'));
+const results = collectJunit(xml);
 const cards = readCards('device', args.catalog);
 const { updated, ignored } = recordDeviceRun({ cards, results, date });
 

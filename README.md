@@ -35,7 +35,7 @@ Cihazda koşudan sonra sonucu kartlara yazmak için test-hub klasöründen:
 node scripts/device-results.mjs --catalog <proje>/tests/catalog --junit <proje>/mobile/test-results/test-hub-maestro.xml
 ```
 
-Betik yalnızca `env: e2e-device` kartlarının `status` ve `last_run` alanlarını günceller. Tarih, XML dosyasının yazıldığı gündür; `--date YYYY-MM-DD` ile değiştirilebilir. Değişen kartlar projede commit edilir, sonraki CI raporu "Last run" sütununda bu tarihi gösterir. Kalan akış varsa betik 1 ile çıkar.
+Betik yalnızca `env: e2e-device` kartlarının `status` ve `last_run` alanlarını günceller. Tarih, XML içindeki koşu zamanından (`timestamp`) alınır, yoksa dosyanın yazıldığı gündür; `--date YYYY-MM-DD` ile değiştirilebilir. Değişen kartlar projede commit edilir, sonraki CI raporu "Last run" sütununda bu tarihi gösterir. Kalan akış varsa betik 1 ile çıkar.
 
 Uygulama dışındaki testler (ör. backend fonksiyonları, güvenlik kuralları) için `extra-test-script` verilir: workflow bu npm betiğini `extra-working-directory` klasöründe `npm ci` sonrası çalıştırır. Betik sonuçlarını `test-results/test-hub-*.json` (Jest/Vitest) ya da `test-hub-*.xml` (JUnit) olarak yazar. `node --test` için `--test-reporter=junit --test-reporter-destination=test-results/test-hub-<ad>.xml` yeterlidir; iç içe `describe` başlıkları JUnit'te `testsuite` adı olarak gelir, kart ID'si onlarda da geçebilir. Firebase Emulator Suite kullanan projeler `firebase-emulators: true` verir (Java 21 kurulur, emülatör indirmeleri önbelleğe alınır).
 
