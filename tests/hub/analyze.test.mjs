@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import {
   analyzeProject,
@@ -126,6 +127,22 @@ describe('project analysis', () => {
     expect(files).not.toContain('.env');
     expect(files).not.toContain('.env.local');
     expect(files.some((file) => file.startsWith('node_modules/'))).toBe(false);
+  });
+
+  test('reads only tracked files in a git repository', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-analyze-git-'));
+    try {
+      const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+      git('init', '-q');
+      fs.writeFileSync(path.join(repo, 'tracked.ts'), 'export {};');
+      fs.mkdirSync(path.join(repo, '.claude'));
+      fs.writeFileSync(path.join(repo, '.claude', 'settings.local.json'), '{}');
+      git('add', 'tracked.ts');
+
+      expect(listFiles(repo)).toEqual(['tracked.ts']);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   test('collects environment variable names, never values', () => {
