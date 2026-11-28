@@ -15,7 +15,21 @@ function readCard(file) {
     if (pair) fields[pair[1]] = pair[2].trim();
   }
   if (!fields.id) throw new Error(`Missing id: ${file}`);
-  return { ...fields, file };
+  return { ...fields, file, sections: cardSections(text.slice(match[0].length)) };
+}
+
+// "## Heading" blocks of the card body, e.g. { Amaç: '...', Beklenen: '...' }.
+export function cardSections(body) {
+  const sections = {};
+  let current = null;
+  for (const line of body.split(/\r?\n/)) {
+    const heading = line.match(/^##\s+(.+?)\s*$/);
+    if (heading) {
+      current = heading[1];
+      sections[current] = [];
+    } else if (current) sections[current].push(line);
+  }
+  return Object.fromEntries(Object.entries(sections).map(([key, lines]) => [key, lines.join('\n').trim()]));
 }
 
 // Cards come from test-hub's catalog, or from the project repository when given.

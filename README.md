@@ -45,7 +45,7 @@ Supabase kullanan projeler `supabase: true` verir: workflow, Supabase CLI ile pr
 
 Kritik öncelikli bir test kaldığında açılan Issue repo sahibine atanır. GitHub Mobile, atanan işler için telefona anlık bildirim gönderir; bunun için uygulamada bildirimleri açmak yeterlidir. Diğer öncelikler ve kararsız testler atanmadan açılır. Repo sahibi atanamıyorsa (örneğin bir organizasyon) Issue atamasız açılır.
 
-## Proje analizi (`/analyze`)
+## Proje analizi ve test üretimi (`/analyze`)
 
 test-hub klasöründe açılan bir Claude Code oturumunda:
 
@@ -53,17 +53,35 @@ test-hub klasöründe açılan bir Claude Code oturumunda:
 /analyze ../carfollow
 ```
 
-1. `scripts/analyze.mjs` statik analiz yapar ve projenin `docs/analysis/` klasörüne `facts.json` ile `static.md` yazar. İçerik dosyalardan okunan kesin bilgilerdir: paketler ve çatılar, yapılandırma dosyaları, workflow'lar, Firestore koleksiyonları, Supabase tabloları (RLS ve politika sayısıyla), route ve ekranlar, ortam değişkenlerinin adları ve test/kart sayıları. Yalnızca git'te izlenen dosyalar okunur; `.env` dosyaları hiç açılmaz.
-2. Claude bu bilgilerle aynı klasöre devir paketini (`README.md`), Mermaid diyagramlarını (`diagrams.md`) ve taslak test kartlarını (`draft-cards/`) yazar. Hepsi "Otomatik üretildi, kontrol edilmedi" satırıyla başlar.
-3. Hiçbir şey commit edilmez. Taslak kartlar onaylanınca elle `tests/catalog/` klasörüne taşınır.
+Komut sırayla şunları yapar:
 
-Proje belgeleri test-hub'a değil, projenin kendi reposuna yazılır; test-hub public bir repodur.
+1. **Statik analiz.** `scripts/analyze.mjs` projenin `docs/analysis/` klasörüne `facts.json` ve `static.md` yazar. İçerik dosyalardan okunan kesin bilgilerdir: paketler, yapılandırma, Firestore koleksiyonları, Supabase tabloları ve RLS, route'lar, ortam değişkenlerinin adları, testler. Yalnızca git'te izlenen dosyalar okunur; `.env` dosyaları hiç açılmaz.
+2. **Fonksiyon envanteri.** `functions.md` dosyasında her fonksiyonun ne yaptığı ve beklenen durumları (normal, sınır, hatalı girdi, yetki) listelenir, hangi kartın onu test ettiği de yazılır.
+3. **Testler ve kartlar.** Testi olmayan riskli fonksiyonlar için gerçek testler yazılır, her biri kendi kart ID'siyle. Kartta `function`, `requirement` ile `## Amaç`, `## Beklenen` ve `## Adımlar` bölümleri bulunur. Bir koşuda en fazla 25 yeni kart yazılır.
+4. **Çalıştırma ve rapor.** Testler çalıştırılır. `scripts/report.mjs --doc` tek parça `TEST-REPORT.md` üretir: özet, "Çözülmesi gerekenler" listesi ve her kart için amaç, beklenen durum, sonuç ve hata.
+5. **Hatalar.** Testi yanlış olan düzeltilir. Kodda gerçek hata bulan test olduğu gibi kalır, kartına `needs_fix: true` ve bir `## Sorun` bölümü eklenir. Uygulama koduna dokunulmaz. Merge sonrası test-hub, kalan her test için `needs-fix` etiketli bir Issue açar.
+6. **Belgeler.** `SRS.md` (ISO/IEC/IEEE 29148: fonksiyonel ve fonksiyonel olmayan gereksinimler, izlenebilirlik matrisi), `SDD.md` (IEEE 1016: mimari, bileşenler, veri, arayüzler, akışlar, güvenlik; Mermaid diyagramlarıyla) ve devir paketi `README.md` yazılır.
+
+Yerelde hiçbir şey commit edilmez. Proje belgeleri test-hub'a değil, projenin kendi reposuna yazılır; test-hub public bir repodur.
+
+CI'daki her test koşusu da aynı tek parça raporu (`TEST-REPORT.md`) üretir ve koşunun artifact'larına koyar.
 
 Yalnızca statik kısmı çalıştırmak için:
 
 ```powershell
 node scripts/analyze.mjs --target ../carfollow
 ```
+
+Yerel sonuçlardan tek parça rapor üretmek için:
+
+```powershell
+node scripts/report.mjs --project mulakat-kocu --catalog ../mulakat-kocu/tests/catalog --unit ../mulakat-kocu/test-results/test-hub-unit.json --doc ../mulakat-kocu/docs/analysis/TEST-REPORT.md
+```
+
+## Zamanlanmış testler
+
+Proje şablonlarında (`templates/*-project-ci.yml`) yorum satırı olarak bir `schedule` bloğu vardır. Açılırsa testler örneğin her pazartesi tam setle çalışır. Private repolarda bu Actions dakikası harcar.
+
 
 ## Panel (`ui/`)
 

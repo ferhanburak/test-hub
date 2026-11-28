@@ -48,7 +48,7 @@ describe('issue sync', () => {
     expect(api.issues[0].title).toBe('[CLT-WEB-001] Form');
     expect(api.issues[0].body).toContain('<!-- test-hub:CLT-WEB-001 -->');
     expect(api.issues[0].body).toContain(RUN_1);
-    expect(api.issues[0].labels).toEqual(['test-hub', 'project:celtikci', 'line:web', 'priority:critical']);
+    expect(api.issues[0].labels).toEqual(['test-hub', 'project:celtikci', 'line:web', 'priority:critical', 'needs-fix']);
   });
 
   test('adds a note instead of a new issue when it fails again', async () => {
@@ -56,6 +56,7 @@ describe('issue sync', () => {
     const summary = await sync(api, results('failed'), RUN_2);
 
     expect(summary.commented).toEqual([CARD.id]);
+    expect(api.issues[0].labels).toContain('needs-fix');
     expect(api.issues).toHaveLength(1);
     expect(api.issues[0].comments).toHaveLength(1);
     expect(api.issues[0].comments[0].body).toContain(RUN_2);

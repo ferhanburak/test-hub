@@ -7,6 +7,9 @@ import { loadResults, readCards } from './lib/hub.mjs';
 
 const BASE_LABEL = 'test-hub';
 const FLAKY_LABEL = 'flaky';
+// Failed tests are work to do in the project; flaky ones need a look first.
+const NEEDS_FIX_LABEL = 'needs-fix';
+const LABEL_COLORS = { [FLAKY_LABEL]: 'fbca04', [NEEDS_FIX_LABEL]: 'd73a4a' };
 const MAX_ERROR_LENGTH = 3000;
 const SECRET_RE = /gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|sk-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{20,}/g;
 
@@ -47,6 +50,7 @@ function labelsFor({ card, project, status }) {
   if (card?.line) labels.push(`line:${card.line}`);
   if (card?.priority) labels.push(`priority:${card.priority}`);
   if (status === 'flaky') labels.push(FLAKY_LABEL);
+  if (status === 'failed') labels.push(NEEDS_FIX_LABEL);
   return labels;
 }
 
@@ -112,7 +116,7 @@ export async function syncIssues({ api, cards, results, project, runUrl, assigne
       issue.number,
       `Test yine ${result.status === 'flaky' ? 'kararsız' : 'kaldı'}.\n\nKoşu: ${runUrl}\n\n${errorBlock(result)}`,
     );
-    if (result.status === 'flaky') await api.addLabels(issue.number, [FLAKY_LABEL]);
+    await api.addLabels(issue.number, [result.status === 'flaky' ? FLAKY_LABEL : NEEDS_FIX_LABEL]);
     summary.commented.push(id);
   }
   return summary;
@@ -164,7 +168,7 @@ export function createGitHubApi({ repo, token, baseUrl = 'https://api.github.com
     closeIssue: (number) => send('PATCH', `/issues/${number}`, { state: 'closed', state_reason: 'completed' }),
     addLabels: (number, labels) => send('POST', `/issues/${number}/labels`, { labels }),
     ensureLabel: async (name) => {
-      const response = await request('POST', '/labels', { name, color: name === FLAKY_LABEL ? 'fbca04' : 'ededed' });
+      const response = await request('POST', '/labels', { name, color: LABEL_COLORS[name] ?? 'ededed' });
       if (!response.ok && response.status !== 422) {
         throw new Error(`GitHub API POST /labels failed: ${response.status}`);
       }
